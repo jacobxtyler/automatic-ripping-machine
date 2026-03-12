@@ -26,7 +26,7 @@ if find_spec("arm") is None:
 import arm.config.config as cfg  # noqa E402
 from arm.models.config import Config  # noqa: E402
 from arm.models.job import Job, JobState  # noqa: E402
-from arm.models.system_drives import SystemDrives  # noqa: E402
+from arm.models.system_drives import CDS, SystemDrives  # noqa: E402
 from arm.ripper import (arm_ripper, identify, logger,  # noqa: E402
                         music_brainz, utils)
 from arm.ripper.ARMInfo import ARMInfo  # noqa E402
@@ -36,6 +36,10 @@ from arm.ui.settings import DriveUtils as drive_utils  # noqa E402
 job: Optional[Job] = None
 args: Optional[Namespace] = None
 log_file: Optional[str] = None
+
+
+class SetupDeferred(utils.RipperException):
+    """Raised for benign startup triggers when no rip job should start."""
 
 
 def entry():
@@ -184,6 +188,8 @@ def setup():
         logging.info(msg)
         time.sleep(1)
     else:  # no break
+        if drive.tray in (CDS.TRAY_OPEN, CDS.NO_DISC):
+            raise SetupDeferred(f"Ignoring trigger while drive is not ready (ioctl tray status: {drive.tray}).")
         raise utils.RipperException(f"Timed out waiting for drive to be ready (ioctl tray status: {drive.tray}).")
 
     # ARM Job starts
@@ -240,32 +246,37 @@ if __name__ == "__main__":
         setup()
         main()
     except Exception as error:
-        logging.critical("A fatal error has occurred and ARM is exiting.")
-        print_stacktrace = (
-            logging.getLogger().getEffectiveLevel() == logging.DEBUG
-            or not isinstance(error, utils.RipperException)
-        )
-        logging.critical(error, exc_info=(error if print_stacktrace else None),)
-
-        if job:
-            utils.notify(
-                job,
-                constants.NOTIFY_TITLE,
-                f"ARM encountered a fatal error processing {job.title}. "
-                f"Check the logs for more details. {error}"
-            )
+        if isinstance(error, SetupDeferred):
+            logging.info(str(error))
         else:
-            utils.notify(
-                job,
-                constants.NOTIFY_TITLE,
-                f"ARM encountered a fatal error during job setup."
-                f"Check the logs for more details. {error}"
+            logging.critical("A fatal error has occurred and ARM is exiting.")
+            print_stacktrace = (
+                logging.getLogger().getEffectiveLevel() == logging.DEBUG
+                or not isinstance(error, utils.RipperException)
             )
-        job.status = JobState.FAILURE.value
-        job.errors = str(error)
+            logging.critical(error, exc_info=(error if print_stacktrace else None),)
+
+            if job:
+                utils.notify(
+                    job,
+                    constants.NOTIFY_TITLE,
+                    f"ARM encountered a fatal error processing {job.title}. "
+                    f"Check the logs for more details. {error}"
+                )
+            else:
+                utils.notify(
+                    job,
+                    constants.NOTIFY_TITLE,
+                    f"ARM encountered a fatal error during job setup. "
+                    f"Check the logs for more details. {error}"
+                )
+            if job:
+                job.status = JobState.FAILURE.value
+                job.errors = str(error)
         # Possibly add cleanup section here for failed job files
     else:
-        job.status = JobState.SUCCESS.value
+        if job:
+            job.status = JobState.SUCCESS.value
     finally:
         if job:
             job.eject()  # each job stores its eject status, so it is safe to call.
