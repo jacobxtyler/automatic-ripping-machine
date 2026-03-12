@@ -832,8 +832,9 @@ def process_single_tracks(job, rawpath, mode: str):
                 "mkv",
             ]
             cmd += shlex.split(job.config.MKV_ARGS)
+            min_length = 0 if mode == 'manual' else int(job.config.MINLENGTH)
             cmd += [
-                f"--minlength={job.config.MINLENGTH}",
+                f"--minlength={min_length}",
                 f"--progress={progress_log(job)}",
                 f"disc:{job.drive.mdisc:d}",
                 track.track_number,
