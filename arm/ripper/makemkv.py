@@ -16,6 +16,7 @@ import os
 import shlex
 import shutil
 import subprocess
+import threading
 from time import sleep
 
 import arm.config.config as cfg
@@ -695,7 +696,7 @@ def makemkv_mkv(job, rawpath):
         cmd += shlex.split(job.config.MKV_ARGS)
         cmd += [
             f"--progress={progress_log(job)}",
-            f"dev:{job.devpath}",
+            f"disc:{job.drive.mdisc:d}",
             "all",
             rawpath,
             f"--minlength={job.config.MINLENGTH}",
@@ -775,7 +776,7 @@ def rip_mainfeature(job, track, rawpath):
     cmd += shlex.split(job.config.MKV_ARGS)
     cmd += [
         f"--progress={progress_log(job)}",
-        f"dev:{job.devpath}",
+        f"disc:{job.drive.mdisc:d}",
         track.track_number,
         rawpath,
         f"--minlength={job.config.MINLENGTH}",
@@ -794,6 +795,11 @@ def process_single_tracks(job, rawpath, mode: str):
         rawpath:
         mode: drive mode (auto or manual)
     """
+    selected_tracks = 0
+    successful_tracks = 0
+    failed_tracks = []
+    last_error = None
+
     # process one track at a time based on track length
     for track in job.tracks:
         # Process single track automatically based on start and finish times
@@ -816,6 +822,7 @@ def process_single_tracks(job, rawpath, mode: str):
 
         # Rip the track if the user has set it to rip, or in auto mode and the time is good
         if track.process:
+            selected_tracks += 1
             logging.info(f"Processing track #{track.track_number} of {(job.no_of_titles - 1)}. "
                          f"Length is {track.length} seconds.")
             filepathname = os.path.join(rawpath, track.filename)
@@ -828,12 +835,30 @@ def process_single_tracks(job, rawpath, mode: str):
             cmd += [
                 f"--minlength={job.config.MINLENGTH}",
                 f"--progress={progress_log(job)}",
-                f"dev:{job.devpath}",
+                f"disc:{job.drive.mdisc:d}",
                 track.track_number,
                 rawpath,
             ]
             logging.debug("Starting to rip single track.")
-            collections.deque(run(cmd, OutputType.MSG), maxlen=0)
+            try:
+                collections.deque(run(cmd, OutputType.MSG), maxlen=0)
+                successful_tracks += 1
+            except MakeMkvRuntimeError as err:
+                last_error = err
+                failed_tracks.append(track.track_number)
+                logging.error(f"Title {track.track_number} failed; continuing with remaining tracks.")
+
+    if selected_tracks > 0:
+        logging.info(f"Single-track rip summary: selected={selected_tracks}, "
+                     f"succeeded={successful_tracks}, failed={selected_tracks - successful_tracks}")
+
+    if selected_tracks > 0 and successful_tracks == 0:
+        failed_list = ", ".join(str(track_no) for track_no in failed_tracks) if failed_tracks else "unknown"
+        err = f"All selected tracks failed in single-track mode. Failed titles: {failed_list}"
+        logging.critical(err)
+        if last_error is not None:
+            raise last_error
+        raise MakeMkvRuntimeError(1, ["RIP_SINGLE_TRACKS"], output=err)
 
 
 def setup_rawpath(job, raw_path):
@@ -1171,15 +1196,29 @@ def run(options, select):
     ]
     cmd += list(options)
     buffer = []
+    stderr_buffer = []
+
+    def capture_stderr(stderr_pipe, err_buffer):
+        """Capture stderr in parallel so diagnostics aren't lost on failures."""
+        if stderr_pipe is None:
+            return
+        for stderr_line in stderr_pipe:
+            stderr_line = stderr_line.rstrip(os.linesep)
+            if stderr_line:
+                err_buffer.append(stderr_line)
+
     logging.debug(f"command: '{' '.join(cmd)}'")
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True) as proc:
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
         logging.debug(f"PID {proc.pid}: command: '{' '.join(cmd)}'")
+        stderr_reader = threading.Thread(
+            target=capture_stderr,
+            args=(proc.stderr, stderr_buffer),
+            daemon=True,
+        )
+        stderr_reader.start()
         for line in proc.stdout:
             line = line.rstrip(os.linesep)
             logging.debug(line)  # Maybe write the raw output to a separate log
-            if proc.returncode:
-                buffer.append(line)
-                continue
             try:
                 msg_type, data = parse_line(line)
             except MakeMkvParserError as err:
@@ -1189,8 +1228,11 @@ def run(options, select):
             logging.debug(data)
             if msg_type in select:
                 yield data
+        proc.wait()
+        stderr_reader.join(timeout=1)
     if proc.returncode:
-        raise MakeMkvRuntimeError(proc.returncode, cmd, output=os.linesep.join(buffer))
+        stderr_output = os.linesep.join(stderr_buffer) if stderr_buffer else None
+        raise MakeMkvRuntimeError(proc.returncode, cmd, output=os.linesep.join(buffer), stderr=stderr_output)
     if buffer:
         logging.warning(f"Cannot parse {len(buffer)} lines: {os.linesep.join(buffer)}")
         raise MakeMkvRuntimeError(proc.returncode, cmd, output=os.linesep.join(buffer))
@@ -1255,3 +1297,5 @@ def manual_wait(job) -> bool:
                 notify(job, title, body)
 
     return user_ready
+
+
