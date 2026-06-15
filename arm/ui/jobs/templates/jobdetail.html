@@ -66,10 +66,10 @@
                     <div class="card{{ ' text-center' if jobs.background is none  else '' }}">
                         <!-- GF Comment -->
                         <div class="card-header text-center">
-                            <h4>{{ jobs.title }} - {{ jobs.video_type.capitalize() }} ({{ jobs.year }})</h4>
+                            <h4>{{ jobs.title }} - {{ "Audiobook" if jobs.disctype == "audiobook" else jobs.video_type.capitalize() }} ({{ jobs.year }})</h4>
                             <div class="ratings float-right mt-0">
                                 <!-- Proof that just because you CAN doesnt mean you should! -->
-                                {% for ratings in s['Ratings'] %}
+                                {% for ratings in s.get('Ratings', []) %}
                                     <div class="
                                             {{ ratings['Source']|replace(' ', '-')|lower }}{{ '-rotten' if ratings['Source'] == 'Rotten Tomatoes' and ratings['Value']|replace('%','')| int < 60 else '' }}">
                                         {{ ratings['Value'].split('/')[0] if '/' in ratings['Value'] else ratings['Value'] }}
@@ -79,14 +79,14 @@
                         </div>
                         {% if not jobs.poster_url %}
                             <div class="card-header background-poster">
-                                {% if jobs.video_type == "Music" %}
+                                {% if jobs.disctype in ["music", "audiobook"] %}
                                     <a id="posterClick" href="#">
                                     <img src="static/img/music.png" alt="Not found" width="240px" class="img-thumbnail"></a>
                                 {% else %}
                                     <a id="posterClick" href="#">
                                     <img src="static/img/none.png" alt="Not found" width="240px" class="img-thumbnail"></a>
                                 {% endif %}
-                                {% if jobs.video_type != "Music" %}
+                                {% if jobs.disctype not in ["music", "audiobook"] %}
                                     <div class="btn-group float-right mt-2" role="group">
                                         <a href="titlesearch?job_id={{ jobs.job_id }}" class="btn btn-primary">Title
                                             Search</a>
@@ -101,7 +101,7 @@
                                 <a id="posterClick" href="#">
                                     <img src="{{ jobs.poster_url }}" width="240px" class="img-thumbnail"
                                          alt="Movie Poster"></a>
-                                {% if jobs.video_type != "Music" %}
+                                {% if jobs.disctype not in ["music", "audiobook"] %}
                                     <div class="btn-group float-right mt-2" role="group">
                                         <a href="titlesearch?job_id={{ jobs.job_id }}" class="btn btn-primary">Title
                                             Search</a>
@@ -287,6 +287,28 @@
                                     <td style="text-align:left"><strong>label</strong></td>
                                     <td style="text-align:left">{{ jobs.label }}</td>
                                 </tr>
+                                {% if jobs.disctype == "audiobook" %}
+                                    <tr>
+                                        <td style="text-align:left"><strong>audiobook_author</strong></td>
+                                        <td style="text-align:left">{{ jobs.audiobook_author }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:left"><strong>audiobook_disc_number</strong></td>
+                                        <td style="text-align:left">{{ jobs.audiobook_disc_number }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:left"><strong>audiobook_total_discs</strong></td>
+                                        <td style="text-align:left">{{ jobs.audiobook_total_discs }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:left"><strong>open_library_work_key</strong></td>
+                                        <td style="text-align:left">{{ jobs.open_library_work_key }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:left"><strong>open_library_cover_id</strong></td>
+                                        <td style="text-align:left">{{ jobs.open_library_cover_id }}</td>
+                                    </tr>
+                                {% endif %}
                                 <tr>
                                     <td style="text-align:left"><strong>ejected</strong></td>
                                     <td style="text-align:left">{{ jobs.ejected }}</td>
@@ -307,7 +329,7 @@
                                     <td style="text-align:left"><strong>Config ID</strong></td>
                                     <td style="text-align:left"> {{ jobs.config.CONFIG_ID }}</td>
                                 </tr>
-                                {% if jobs.video_type != "Music" %}
+                                {% if jobs.disctype not in ["music", "audiobook"] %}
                                     <tr>
                                         <td style="text-align:left"><strong>HB_PRESET_DVD</strong></td>
                                         <td style="text-align:left"> {{ jobs.config.HB_PRESET_DVD }}</td>
@@ -339,11 +361,89 @@
                             </table>
                             <hr class="test d-none">
                             <form method="POST" action="/jobdetailload?job_id={{ jobs.job_id }}">
+                                {% if manual_edit and jobs.disctype == "music" %}
+                                    <div class="mb-3">
+                                        <h5>Audio CD Type</h5>
+                                        <div class="input-group mb-3">
+                                            <select class="form-control" id="audio_disc_type" name="audio_disc_type">
+                                                <option value="music">Music</option>
+                                                <option value="audiobook">Audiobook</option>
+                                            </select>
+                                            <div class="input-group-append">
+                                                <button class="btn btn-primary" type="submit">Continue</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                {% endif %}
+                                {% if manual_edit and jobs.disctype == "audiobook" %}
+                                    <div class="mb-3">
+                                        <h5>Audiobook Metadata</h5>
+                                        <div class="input-group mb-3">
+                                            <input class="form-control" id="open_library_query"
+                                                   name="open_library_query"
+                                                   value="{{ jobs.title_manual or jobs.title or '' }}">
+                                            <div class="input-group-append">
+                                                <button class="btn btn-secondary" type="button"
+                                                        id="open_library_lookup">
+                                                    Open Library
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <select class="form-control" id="open_library_results" style="display:none;">
+                                            </select>
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="form-group col-md-6">
+                                                <label for="audiobook_author">Author</label>
+                                                <input class="form-control" id="audiobook_author"
+                                                       name="audiobook_author"
+                                                       value="{{ jobs.audiobook_author or '' }}" required>
+                                            </div>
+                                            <div class="form-group col-md-6">
+                                                <label for="audiobook_title">Title</label>
+                                                <input class="form-control" id="audiobook_title" name="audiobook_title"
+                                                       value="{{ jobs.title_manual or jobs.title or '' }}" required>
+                                            </div>
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="form-group col-md-3">
+                                                <label for="audiobook_disc_number">Disc Number</label>
+                                                <input class="form-control" id="audiobook_disc_number"
+                                                       name="audiobook_disc_number" type="number" min="1"
+                                                       value="{{ jobs.audiobook_disc_number or '' }}" required>
+                                            </div>
+                                            <div class="form-group col-md-3">
+                                                <label for="audiobook_total_discs">Total Discs</label>
+                                                <input class="form-control" id="audiobook_total_discs"
+                                                       name="audiobook_total_discs" type="number" min="1"
+                                                       value="{{ jobs.audiobook_total_discs or '' }}">
+                                            </div>
+                                            <div class="form-group col-md-3">
+                                                <label for="audiobook_year">Year</label>
+                                                <input class="form-control" id="audiobook_year" name="audiobook_year"
+                                                       value="{{ jobs.year_manual or jobs.year or '' }}" maxlength="4">
+                                            </div>
+                                            <div class="form-group col-md-3">
+                                                <label for="open_library_cover_id">Cover ID</label>
+                                                <input class="form-control" id="open_library_cover_id"
+                                                       name="open_library_cover_id"
+                                                       value="{{ jobs.open_library_cover_id or '' }}">
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label for="open_library_work_key">Open Library Work Key</label>
+                                            <input class="form-control" id="open_library_work_key"
+                                                   name="open_library_work_key"
+                                                   value="{{ jobs.open_library_work_key or '' }}">
+                                        </div>
+                                    </div>
+                                {% endif %}
                                 <table id="tracktable" class="table table-striped" aria-label="Tracks">
                                     <thead class="bg-secondary">
                                     <tr>
                                         <th scope="col" style="text-align:left">Track #</th>
-                                        {% if jobs.video_type == "Music" %}
+                                        {% if jobs.disctype in ["music", "audiobook"] %}
                                             <th scope="col" style="text-align:left">Track Name</th>
                                         {% endif %}
                                         <th scope="col" style="text-align:left">
@@ -354,7 +454,7 @@
                                         <th scope="col" style="text-align:left">FPS</th>
                                         <th scope="col" style="text-align:left">Aspect Ratio</th>
                                         <th scope="col" style="text-align:left">Main Feature</th>
-                                        {% if jobs.video_type != "Music" %}
+                                        {% if jobs.disctype not in ["music", "audiobook"] %}
                                             <th scope="col" style="text-align:left">Manual Process</th>
                                         {% endif %}
                                         <th scope="col" style="text-align:left">Ripped</th>
@@ -364,17 +464,17 @@
                                     {% for track in tracks %}
                                         <tr>
                                             <td style="text-align:left"><strong>{{ track.track_number }}</strong></td>
-                                            {% if jobs.video_type == "Music" %}
+                                            {% if jobs.disctype in ["music", "audiobook"] %}
                                                 <td style="text-align:left"><strong>{{ track.filename}}</strong></td>
                                             {% endif %}
                                             <td style="text-align:left">
-                                                <span class="length-seconds">{{ track.length }}{{ " (Milliseconds)" if jobs.video_type == "Music" else "" }}</span>
+                                                <span class="length-seconds">{{ track.length }}{{ " (Milliseconds)" if jobs.disctype in ["music", "audiobook"] else "" }}</span>
                                                 <span class="length-formatted" style="display:none;" data-seconds="{{ track.length }}"></span>
                                             </td>
                                             <td style="text-align:left">{{ track.fps }}</td>
                                             <td style="text-align:left">{{ track.aspect_ratio }}</td>
                                             <td style="text-align:left">{{ track.main_feature }}</td>
-                                            {% if jobs.video_type != "Music" %}
+                                            {% if jobs.disctype not in ["music", "audiobook"] %}
                                                 <td style="text-align:center">
                                                         {{ form.track_ref[loop.index0].checkbox }}
                                                         {{ form.track_ref[loop.index0].track_ref }}
@@ -404,13 +504,44 @@
             $("#posterClick").click(function () {
                 $("#plotInfo").slideToggle(1000);
             });
+            $("#open_library_lookup").click(function () {
+                const query = $("#open_library_query").val();
+                $.getJSON("/json", {mode: "audiobook_search", q: query}, function (data) {
+                    if (data.success === true && data.results.length > 0) {
+                        const resultSelect = $("#open_library_results");
+                        resultSelect.empty();
+                        data.results.forEach(function (result, index) {
+                            const label = `${result.title} - ${result.author} ${result.year}`.trim();
+                            resultSelect.append($("<option>", {
+                                value: index,
+                                text: label,
+                                "data-result": JSON.stringify(result)
+                            }));
+                        });
+                        resultSelect.show();
+                        resultSelect.trigger("change");
+                    }
+                });
+            });
+            $("#open_library_results").change(function () {
+                const selected = $(this).find(":selected");
+                if (!selected.length) {
+                    return;
+                }
+                const result = JSON.parse(selected.attr("data-result"));
+                $("#audiobook_author").val(result.author);
+                $("#audiobook_title").val(result.title);
+                $("#audiobook_year").val(result.year);
+                $("#open_library_work_key").val(result.open_library_work_key);
+                $("#open_library_cover_id").val(result.cover_id);
+            });
 
             // Function to convert seconds to HH:MM:SS format
             function secondsToHHMMSS(seconds) {
                 if (!seconds) return "00:00:00";
                 
                 // Check if the video type is Music (which stores duration in milliseconds)
-                const isMusic = "{{ jobs.video_type }}" === "Music";
+                const isMusic = ["music", "audiobook"].includes("{{ jobs.disctype }}");
                 let secondsValue = parseInt(seconds, 10);
                 
                 // Convert milliseconds to seconds for music tracks

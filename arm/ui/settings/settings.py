@@ -20,6 +20,7 @@ import re
 import subprocess
 from datetime import datetime
 import os
+from pathlib import Path
 
 import sqlalchemy
 
@@ -36,10 +37,24 @@ from arm.models.system_drives import SystemDrives
 from arm.models.system_info import SystemInfo
 from arm.models.ui_settings import UISettings
 import arm.config.config as cfg
+from arm.ui.settings.ServerUtil import ServerUtil
 from arm.ui.settings import DriveUtils as drive_utils
 from arm.ui.forms import SettingsForm, UiSettingsForm, AbcdeForm, SystemInfoDrives
-from arm.ui.settings.ServerUtil import ServerUtil
 import arm.ripper.utils as ripper_utils
+
+
+def get_manual_start_wrapper():
+    """Return the wrapper script that matches the local ARM install style."""
+    install_path = Path(cfg.arm_config["INSTALLPATH"])
+
+    if Path("/.dockerenv").exists():
+        return install_path / "scripts/docker/docker_arm_wrapper.sh"
+
+    if (install_path / "venv/bin/python3").is_file():
+        return install_path / "scripts/thickclient/arm_venv_wrapper.sh"
+
+    return install_path / "scripts/thickclient/arm_wrapper.sh"
+
 
 route_settings = Blueprint('route_settings', __name__,
                            template_folder='templates',
@@ -79,6 +94,7 @@ def settings():
     movies = Job.query.filter_by(video_type="movie").count()
     series = Job.query.filter_by(video_type="series").count()
     cds = Job.query.filter_by(disctype="music").count()
+    audiobooks = Job.query.filter_by(disctype="audiobook").count()
 
     # Get the current server time and timezone
     server_timezone = os.environ.get("TZ", "Etc/UTC")
@@ -96,6 +112,7 @@ def settings():
              'movies_ripped': movies,
              'series_ripped': series,
              'cds_ripped': cds,
+             'audiobooks_ripped': audiobooks,
              'no_failed_jobs': failed_rips,
              'total_rips': total_rips,
              'updated': ui_utils.git_check_updates(local_git_hash),
@@ -395,31 +412,30 @@ def drive_manual(manual_id):
     drive = SystemDrives.query.filter_by(drive_id=manual_id).first()
     dev_path = drive.mount.lstrip('/dev/')
 
-    cmd = os.path.join(
-        cfg.arm_config["INSTALLPATH"],
-        f"scripts/docker/docker_arm_wrapper.sh {dev_path}",
-    )
+    wrapper = get_manual_start_wrapper()
+    cmd = f"{wrapper} {dev_path}"
     app.logger.debug(f"Running command[{cmd}]")
 
-    # Manually start ARM if the udev rules are not working for some reason
+    # Manually start ARM if the udev rules are not working for some reason.
+    # Do not wait for the ripper to finish; it is a long-running background job.
     try:
-        manual_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = manual_process.communicate()
-
-        if manual_process.returncode != 0:
-            raise subprocess.CalledProcessError(manual_process.returncode, cmd, output=stdout, stderr=stderr)
+        manual_process = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 
         message = f"Manually starting a job on Drive: '{drive.name}'"
         status = "success"
-        app.logger.debug(stdout)
+        app.logger.debug(f"Manual start process pid: {manual_process.pid}")
 
-    except subprocess.CalledProcessError as e:
+    except OSError as e:
         message = f"Failed to start a job on Drive: '{drive.name}' See logs for info"
         status = "danger"
         app.logger.error(message)
         app.logger.error(f"error: {e}")
-        app.logger.error(f"stdout: {e.output}")
-        app.logger.error(f"stderr: {e.stderr}")
 
     flash(message, status)
     return redirect('/settings')

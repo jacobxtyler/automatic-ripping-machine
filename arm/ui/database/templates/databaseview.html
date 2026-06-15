@@ -108,7 +108,7 @@
                                 <div class="row no-gutters">
                                     <div class="col-lg-4">
                                         {% if not job.poster_url or job.poster_url == "None" %}
-                                            {% if job.video_type == "Music" %}
+                                            {% if job.disctype in ["music", "audiobook"] %}
                                                 <a href="jobdetail?job_id={{ job.job_id }}"><img src="static/img/music.png"
                                                                                                 width="240px"
                                                                                                 class="img-thumbnail"
@@ -128,7 +128,19 @@
                                     </div>
                                     <div class="col-lg-4">
                                         <div class="card-body px-1 py-1">
-                                            <strong>Type: </strong> {{ job.video_type }} <br>
+                                            <strong>Type: </strong>
+                                            {{ "Audiobook" if job.disctype == "audiobook" else job.video_type }} <br>
+                                            {% if job.disctype == "audiobook" %}
+                                                <strong>Author: </strong>{{ job.audiobook_author or "Unknown Author" }}<br>
+                                                {% if job.audiobook_disc_number %}
+                                                    <strong>Disc: </strong>{{ "%02d"|format(job.audiobook_disc_number) }}
+                                                    {% if job.audiobook_total_discs %}
+                                                        / {{ "%02d"|format(job.audiobook_total_discs) }}
+                                                    {% endif %}<br>
+                                                {% else %}
+                                                    <strong>Disc: </strong>Pending<br>
+                                                {% endif %}<br>
+                                            {% endif %}
                                             {% if not job.title_manual %}
                                                 <strong>Year: </strong>({{ job["year"] }})<br>
                                             {% else %}

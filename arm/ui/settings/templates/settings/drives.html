@@ -97,7 +97,7 @@
                                                             <div class="col-sm-3 col-form-label px-1">Current Job</div>
                                                             <div class="col-sm-9 col-form-label px-1 small">
                                                                 <a href="/jobdetail?job_id={{ drive.job_current.job_id }}">
-                                                                    <span class="text-capitalize">{{ drive.job_current.video_type }}</span> - {{ drive.job_current.title }} - {{ drive.job_current.year }}
+                                                                    <span class="text-capitalize">{{ drive.job_current.disctype if drive.job_current.disctype == "audiobook" else drive.job_current.video_type }}</span> - {{ drive.job_current.title }} - {{ drive.job_current.year }}
                                                                 </a>
                                                             </div>
                                                         </div>
@@ -107,7 +107,7 @@
                                                             <div class="col-sm-3 col-form-label px-1 px-1">Previous Job</div>
                                                             <div class="col-sm-9 col-form-label px-1 small">
                                                                 <a href="/jobdetail?job_id={{ drive.job_previous.job_id }}">
-                                                                    <span class="text-capitalize">{{ drive.job_previous.video_type }}</span> - {{ drive.job_previous.title }} - {{ drive.job_previous.year }}
+                                                                    <span class="text-capitalize">{{ drive.job_previous.disctype if drive.job_previous.disctype == "audiobook" else drive.job_previous.video_type }}</span> - {{ drive.job_previous.title }} - {{ drive.job_previous.year }}
                                                                 </a>
                                                             </div>
                                                         </div>

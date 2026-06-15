@@ -81,6 +81,9 @@ def check_db_version(install_path, db_file):
     config.set_main_option("script_location", mig_dir)
     script = ScriptDirectory.from_config(config)
 
+    head_revision = script.get_current_head()
+    app.logger.debug("Alembic Head is: " + head_revision)
+
     # create db file if it doesn't exist
     if not os.path.isfile(db_file):
         app.logger.info("No database found.  Initializing arm.db...")
@@ -90,38 +93,44 @@ def check_db_version(install_path, db_file):
 
         if not os.path.isfile(db_file):
             app.logger.debug("Can't create database file.  This could be a permissions issue.  Exiting...")
-        else:
-            # Only run the below if the db exists
-            # Check to see if db is at current revision
-            head_revision = script.get_current_head()
-            app.logger.debug("Alembic Head is: " + head_revision)
+            return
 
-            conn = sqlite3.connect(db_file)
-            c = conn.cursor()
-
+    conn = sqlite3.connect(db_file)
+    try:
+        c = conn.cursor()
         c.execute('SELECT version_num FROM alembic_version')
         db_version = c.fetchone()[0]
         app.logger.debug(f"Database version is: {db_version}")
-        if head_revision == db_version:
-            app.logger.info("Database is up to date")
-        else:
-            app.logger.info(
-                f"Database out of date. Head is {head_revision} and database is {db_version}.  Upgrading database...")
-            with app.app_context():
-                unique_stamp = round(time() * 100)
-                app.logger.info(f"Backing up database '{db_file}' to '{db_file}{unique_stamp}'.")
-                shutil.copy(db_file, db_file + "_" + str(unique_stamp))
-                flask_migrate.upgrade(mig_dir)
-            app.logger.info("Upgrade complete.  Validating version level...")
+    finally:
+        conn.close()
 
-            c.execute("SELECT version_num FROM alembic_version")
-            db_version = c.fetchone()[0]
-            app.logger.debug(f"Database version is: {db_version}")
-            if head_revision == db_version:
-                app.logger.info("Database is now up to date")
-            else:
-                app.logger.error(f"Database is still out of date. "
-                                 f"Head is {head_revision} and database is {db_version}.  Exiting arm.")
+    if head_revision == db_version:
+        app.logger.info("Database is up to date")
+        return
+
+    app.logger.info(
+        f"Database out of date. Head is {head_revision} and database is {db_version}.  Upgrading database...")
+    with app.app_context():
+        unique_stamp = round(time() * 100)
+        app.logger.info(f"Backing up database '{db_file}' to '{db_file}{unique_stamp}'.")
+        shutil.copy(db_file, db_file + "_" + str(unique_stamp))
+        flask_migrate.upgrade(mig_dir)
+    app.logger.info("Upgrade complete.  Validating version level...")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        c = conn.cursor()
+        c.execute("SELECT version_num FROM alembic_version")
+        db_version = c.fetchone()[0]
+        app.logger.debug(f"Database version is: {db_version}")
+    finally:
+        conn.close()
+
+    if head_revision == db_version:
+        app.logger.info("Database is now up to date")
+    else:
+        app.logger.error(f"Database is still out of date. "
+                         f"Head is {head_revision} and database is {db_version}.  Exiting arm.")
 
 
 def arm_alembic_get():

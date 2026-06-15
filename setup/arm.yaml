@@ -135,6 +135,9 @@ TRANSCODE_PATH: "/home/arm/media/transcode/"
 # Ripped and transcoded files end up here
 COMPLETED_PATH: "/home/arm/media/completed/"
 
+# Final directory for audiobook CD rips
+AUDIOBOOK_PATH: "/home/arm/audiobooks/"
+
 # Movie subdirectory name for "extras"
 # Valid names are dependent on your media server
 # For Emby see https://github.com/MediaBrowser/Wiki/wiki/Movie%20naming#user-content-movie-extras

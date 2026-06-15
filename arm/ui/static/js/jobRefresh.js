@@ -96,7 +96,7 @@ function updateProgress(job, oldJob) {
 
 /**
  * Checks if current job needs a stage/progress bar added
- * This is enabled for music discs to enable current ripping track in job.stage
+ * This is enabled for audio discs to enable current ripping track in job.stage
  * @param job current job object
  * @returns {boolean} True if job is transcoding or disc is an audio disc
  */
@@ -111,7 +111,7 @@ function checkTranscodeStatus(job) {
         status = true;
     }
     // abcde is ripping the audio disc and is outputting stage and eta
-    if (job.disctype === "music" && job.stage !== "") {
+    if ((job.disctype === "music" || job.disctype === "audiobook") && job.stage !== "") {
         status = true;
     }
     return status;

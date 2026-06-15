@@ -1,6 +1,9 @@
 #!/bin/bash
 
 DEVNAME=$1
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALLPATH="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PYTHON_BIN="${INSTALLPATH}/venv/bin/python3"
 ARMLOG="/home/arm/logs/arm.log"
 echo "[ARM] Entering docker wrapper" | logger -t ARM -s
 echo "$(date) Entering docker wrapper" >> $ARMLOG
@@ -32,5 +35,10 @@ else
 	  echo "[ARM] Starting ARM for unknown disc type on ${DEVNAME}" | logger -t ARM -s
 	  echo "$(date) [ARM] Starting ARM for unknown disc type on ${DEVNAME}" >> $ARMLOG
 fi
+
+if [ ! -x "${PYTHON_BIN}" ]; then
+    PYTHON_BIN="$(command -v python3)"
+fi
+
 cd /home/arm
-python3 /opt/arm/arm/ripper/main.py -d "${DEVNAME}" | logger -t ARM -s
+"${PYTHON_BIN}" "${INSTALLPATH}/arm/ripper/main.py" -d "${DEVNAME}" 2>&1 | logger -t ARM -s

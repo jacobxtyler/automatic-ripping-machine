@@ -78,7 +78,7 @@ def log_arm_params(job):
                 "MKV_ARGS", "DELRAWFILES", "HB_PRESET_DVD", "HB_PRESET_BD",
                 "HB_ARGS_DVD", "HB_ARGS_BD", "FFMPEG_CLI", "FFMPEG_LOCAL", "USE_FFMPEG",
                 "FFMPEG_ARGS", "RAW_PATH", "TRANSCODE_PATH",
-                "COMPLETED_PATH", "EXTRAS_SUB", "EMBY_REFRESH", "EMBY_SERVER",
+                "COMPLETED_PATH", "AUDIOBOOK_PATH", "EXTRAS_SUB", "EMBY_REFRESH", "EMBY_SERVER",
                 "EMBY_PORT", "NOTIFY_RIP", "NOTIFY_TRANSCODE",
                 "MAX_CONCURRENT_TRANSCODES", "MAX_CONCURRENT_MAKEMKVINFO"):
         logging.info(f"{key.lower()}: {str(cfg.arm_config.get(key, '<not given>'))}")
@@ -139,6 +139,21 @@ def main():
             job.status = JobState.FAILURE.value
             db.session.commit()
 
+    # Type: Audiobook
+    elif job.disctype == "audiobook":
+        if utils.rip_audiobook(job, log_file):
+            output_path = getattr(job, "path", None)
+            output_message = f". Output: {output_path}" if output_path else ""
+            utils.notify(job, constants.NOTIFY_TITLE,
+                         f"Audiobook CD: {job.title} {constants.PROCESS_COMPLETE}{output_message}")
+            utils.scan_emby()
+            job.status = JobState.SUCCESS.value
+            db.session.commit()
+        else:
+            logging.critical("Audiobook rip failed.  See previous errors.  Exiting. ")
+            job.status = JobState.FAILURE.value
+            db.session.commit()
+
     # Type: Data
     elif job.disctype == "data":
         logging.info("Disc identified as data")
@@ -189,6 +204,7 @@ def setup():
     # ARM Job starts
     # Create new job
     job = Job(devpath)
+    job.manual_mode = drive.drive_mode == 'manual'
     # Setup logging
     log_file = logger.setup_job_log(job)
 

@@ -69,8 +69,13 @@
                             <tbody>
                             {% for job in jobs %}
                             <tr>
-                                <th scope="row" class="text-wrap"><a href="jobdetail?job_id={{ job.job_id }}">{{
-                                    job.title|truncate(50, True) if job.title is not none else 'Title unknown' }}</a>
+                                <th scope="row" class="text-wrap"><a href="jobdetail?job_id={{ job.job_id }}">
+                                    {% if job.disctype == "audiobook" and job.audiobook_author %}
+                                        {{ (job.audiobook_author ~ " - " ~ (job.title or "Title unknown"))|truncate(50, True) }}
+                                    {% else %}
+                                        {{ job.title|truncate(50, True) if job.title is not none else 'Title unknown' }}
+                                    {% endif %}
+                                </a>
                                 </th>
                                 <td>{{ job.start_time.strftime(date_format) if job.start_time is not none }}</td>
                                 <td class="hidden">{{ job.start_time if job.start_time is not none }}</td>

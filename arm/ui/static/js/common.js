@@ -14,6 +14,10 @@ const CARD_DECK = ".card-deck";
 const SUCCESS_CLASS = "alert-success";
 const MODAL_FOOTER = ".modal-footer";
 
+function isAudioDisc(job) {
+    return job.disctype === "music" || job.disctype === "audiobook";
+}
+
 function getRipperName(job, idsplit) {
     let ripperName;
     if (job.ripper) {
@@ -52,7 +56,7 @@ function addJobItem(job, authenticated) {
 
 function transcodingCheck(job) {
     let x = "";
-    if (job.status === "transcoding" && job.stage !== "" && job.progress || job.disctype === "music" && job.stage !== "") {
+    if (job.status === "transcoding" && job.stage !== "" && job.progress || isAudioDisc(job) && job.stage !== "") {
         x += `<div id="jobId${job.job_id}_stage"><strong>Stage: </strong>${job.stage}</div>`;
         x += `<div id="jobId${job.job_id}_progress" >`;
         x += `<div class="progress">
@@ -78,7 +82,7 @@ function transcodingCheck(job) {
 
 function musicCheck(job, idsplit) {
     let x = "";
-    if (job.video_type !== "Music") {
+    if (!isAudioDisc(job)) {
         x = `<a href="titlesearch?job_id=${idsplit[1]}" class="btn btn-primary">Title Search</a>
              <a href="customTitle?job_id=${idsplit[1]}" class="btn btn-primary">Custom Title</a>
              <a href="changeparams?config_id=${idsplit[1]}" class="btn btn-primary">Edit Settings</a>`;
@@ -92,7 +96,7 @@ function posterCheck(job) {
     if (job.poster_url !== "None" && job.poster_url !== "N/A") {
         x = `<img id="jobId${job.job_id}_poster_url" alt="poster img" src="${job.poster_url}" width="240px" class="img-thumbnail">`;
     } else {
-        if (job.video_type === "Music") {
+        if (isAudioDisc(job)) {
             image = 'music.png';
         } else {
             image = 'none.png';
@@ -116,12 +120,27 @@ function buildMiddleSection(job) {
     let x;
     x = "<div class=\"col-lg-4\"><div class=\"card-body px-1 py-1\">";
     x += `<div id="jobId${job.job_id}_year"><strong>Year: </strong>${job.year}</div>`;
-    x += `<div id="jobId${job.job_id}_video_type"><strong>Type: </strong>${job.video_type}</div>`;
+    x += `<div id="jobId${job.job_id}_video_type"><strong>Type: </strong>${job.disctype === "audiobook" ? "Audiobook" : job.video_type}</div>`;
+    if (job.disctype === "audiobook") {
+        x += `<div id="jobId${job.job_id}_audiobook_author"><strong>Author: </strong>${job.audiobook_author || "Unknown Author"}</div>`;
+        x += `<div id="jobId${job.job_id}_audiobook_disc"><strong>Disc: </strong>${formatAudiobookDisc(job)}</div>`;
+    }
     x += `<div id="jobId${job.job_id}_devpath"><strong>Device: </strong>${job.devpath}</div>`;
     x += `<div><strong>Status: </strong><img id="jobId${job.job_id}_status" 
                                src="static/img/${job.status}.png" height="20px" alt="${job.status}" title="${job.status}"></div>`;
     x += `<div id="jobId${job.job_id}_progress_section">${transcodingCheck(job)}</div></div></div>`;
     return x;
+}
+
+function formatAudiobookDisc(job) {
+    if (!job.audiobook_disc_number || job.audiobook_disc_number === "None") {
+        return "Pending";
+    }
+    const discNumber = String(job.audiobook_disc_number).padStart(2, "0");
+    if (job.audiobook_total_discs && job.audiobook_total_discs !== "None") {
+        return `${discNumber} / ${String(job.audiobook_total_discs).padStart(2, "0")}`;
+    }
+    return discNumber;
 }
 
 function buildRightSection(job, idsplit, authenticated) {

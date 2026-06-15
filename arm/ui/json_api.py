@@ -18,6 +18,7 @@ from arm.models.config import Config
 from arm.models.job import Job, JobState, JOB_STATUS_FINISHED
 from arm.models.notifications import Notifications
 from arm.models.track import Track
+from arm.ripper import open_library
 from arm.models.ui_settings import UISettings
 from arm.ui import app, db
 from arm.ui.forms import ChangeParamsForm
@@ -30,6 +31,15 @@ def get_notifications():
     all_notification = Notifications.query.filter_by(seen=False)
     notification = [a.get_d() for a in all_notification]
     return notification
+
+
+def audiobook_search(searchq):
+    """Search Open Library for audiobook metadata prefill candidates."""
+    return {
+        'success': True,
+        'mode': 'audiobook_search',
+        'results': open_library.search(searchq) if searchq else []
+    }
 
 
 def get_x_jobs(job_status):
@@ -94,7 +104,7 @@ def process_logfile(logfile, job, job_results):
         if job.status == JobState.TRANSCODE_ACTIVE.value:
             app.logger.debug("using handbrake")
             return process_handbrake_logfile(logfile, job, job_results)
-    if job.disctype == "music" and job.status == JobState.AUDIO_RIPPING.value:
+    if job.disctype in {"music", "audiobook"} and job.status == JobState.AUDIO_RIPPING.value:
         app.logger.debug("using audio disc")
         return process_audio_logfile(job.logfile, job, job_results)
     return job_results

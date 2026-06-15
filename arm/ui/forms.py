@@ -20,8 +20,9 @@ class ChangeParamsForm(FlaskForm):
           - /changeparams"""
     RIPMETHOD = SelectField('Rip Method: ', choices=[('mkv', 'mkv'), ('backup', 'backup')])
     DISCTYPE = SelectField('Disc Type: ', choices=[('dvd', 'DVD'), ('bluray', 'Blu-ray'),
-                                                   ('music', 'Music'), ('data', 'Data')])
-    # "music", "dvd", "bluray" and "data"
+                                                   ('music', 'Music'), ('audiobook', 'Audiobook'),
+                                                   ('data', 'Data')])
+    # "music", "audiobook", "dvd", "bluray" and "data"
     MAINFEATURE = BooleanField('Main Feature: ')
     MINLENGTH = IntegerField('Minimum Length: ')
     MAXLENGTH = IntegerField('Maximum Length: ')
@@ -42,6 +43,7 @@ class SettingsForm(FlaskForm):
     RAW_PATH = StringField('RAW_PATH', validators=[DataRequired()])
     TRANSCODE_PATH = StringField('TRANSCODE_PATH', validators=[DataRequired()])
     COMPLETED_PATH = StringField('COMPLETED_PATH', validators=[DataRequired()])
+    AUDIOBOOK_PATH = StringField('AUDIOBOOK_PATH', validators=[DataRequired()])
     submit = SubmitField('Submit')
 
 

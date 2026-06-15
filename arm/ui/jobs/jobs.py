@@ -30,6 +30,73 @@ route_jobs = Blueprint('route_jobs', __name__,
                        static_folder='../static')
 
 
+def _positive_int(value, field_name):
+    """Convert a form value to a positive integer."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field_name} must be a positive number.") from error
+    if number < 1:
+        raise ValueError(f"{field_name} must be a positive number.")
+    return number
+
+
+def _optional_positive_int(value, field_name):
+    """Convert an optional form value to a positive integer or None."""
+    if value in (None, ""):
+        return None
+    return _positive_int(value, field_name)
+
+
+def update_audiobook_metadata(job, form_data):
+    """Apply submitted audiobook metadata to a job."""
+    required_fields = {
+        'audiobook_author': form_data.get('audiobook_author', '').strip(),
+        'audiobook_title': form_data.get('audiobook_title', '').strip(),
+        'audiobook_disc_number': form_data.get('audiobook_disc_number', '').strip(),
+    }
+    missing = [field for field, value in required_fields.items() if not value]
+    if missing:
+        raise ValueError("Author, title, and disc number are required for audiobook jobs.")
+
+    job.audiobook_author = required_fields['audiobook_author']
+    job.title = job.title_manual = ui_utils.clean_for_filename(required_fields['audiobook_title'])
+    job.audiobook_disc_number = _positive_int(required_fields['audiobook_disc_number'], "Disc number")
+    job.audiobook_total_discs = _optional_positive_int(form_data.get('audiobook_total_discs'), "Total discs")
+    job.year = job.year_manual = form_data.get('audiobook_year') or None
+    job.open_library_work_key = form_data.get('open_library_work_key') or None
+    job.open_library_cover_id = form_data.get('open_library_cover_id') or None
+    job.hasnicetitle = True
+    job.manual_start = True
+
+
+def update_audio_manual_choice(job, form_data):
+    """Apply the manual Music/Audiobook choice for an audio CD."""
+    audio_disc_type = form_data.get('audio_disc_type')
+    if audio_disc_type not in ("music", "audiobook"):
+        raise ValueError("Audio disc type must be Music or Audiobook.")
+
+    job.disctype = audio_disc_type
+    if audio_disc_type == "music":
+        job.manual_start = True
+    else:
+        job.hasnicetitle = False
+        job.manual_start = False
+
+
+def job_uses_video_metadata(job):
+    """Return True when a job should use movie/show metadata lookups."""
+    return job.disctype in ("dvd", "bluray")
+
+
+def get_jobdetail_metadata(job):
+    """Return metadata for the job detail page without querying video providers for audio jobs."""
+    if not job_uses_video_metadata(job):
+        return {"Ratings": [], "Plot": "", "background_url": None}
+    search_results = ui_utils.metadata_selector("get_details", job.title, job.year, job.imdb_id)
+    return search_results or {"Ratings": [], "Plot": "", "background_url": None}
+
+
 @route_jobs.route('/jobdetail')
 @login_required
 def jobdetail():
@@ -66,7 +133,7 @@ def jobdetail():
         for entry in track_form.track_ref.entries:
             entry.checkbox.render_kw = {'disabled': 'disabled'}
 
-    search_results = ui_utils.metadata_selector("get_details", job.title, job.year, job.imdb_id)
+    search_results = get_jobdetail_metadata(job)
 
     if search_results and 'Error' not in search_results:
         job.plot = search_results['Plot'] if 'Plot' in search_results else "There was a problem getting the plot"
@@ -92,6 +159,32 @@ def jobdetail_load():
 
     job_id = request.args.get('job_id')
     job = Job.query.get(job_id)
+
+    if request.method == 'POST' and request.form.get('audio_disc_type'):
+        try:
+            update_audio_manual_choice(job, request.form)
+        except ValueError as error:
+            flash(str(error), "danger")
+            return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
+
+        db.session.commit()
+        if job.disctype == "audiobook":
+            flash("Audiobook selected. Enter audiobook metadata to start ripping.", "success")
+        else:
+            flash("Music CD selected", "success")
+        return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
+
+    if request.method == 'POST' and job.disctype == "audiobook":
+        try:
+            update_audiobook_metadata(job, request.form)
+        except ValueError as error:
+            flash(str(error), "danger")
+            return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
+
+        db.session.commit()
+        app.logger.debug(f"Setting [{job.job_id}] to [{job.manual_start}], lets get ripping")
+        flash("Audiobook metadata was updated", "success")
+        return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
 
     # Data passed back from webpage, process and update track fields
     if request.method == 'POST' and track_form.validate_on_submit():
@@ -324,6 +417,7 @@ def feed_json():
             'abandon': {'funct': json_api.abandon_job, 'args': ('j_id',)},
             'full': {'funct': json_api.generate_log, 'args': ('logpath', 'j_id')},
             'search': {'funct': json_api.search, 'args': ('searchq',)},
+            'audiobook_search': {'funct': json_api.audiobook_search, 'args': ('searchq',)},
             'getfailed': {
                 'funct': json_api.get_x_jobs,
                 'args': (JobState.FAILURE.value,),

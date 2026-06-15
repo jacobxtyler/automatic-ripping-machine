@@ -141,8 +141,13 @@ class Job(db.Model):
     mountpoint = db.Column(db.String(20))
     hasnicetitle = db.Column(db.Boolean)
     errors = db.Column(db.Text)
-    disctype = db.Column(db.String(20))  # dvd/bluray/data/music/unknown
+    disctype = db.Column(db.String(20))  # dvd/bluray/data/music/audiobook/unknown
     label = db.Column(db.String(256))
+    audiobook_author = db.Column(db.String(256))
+    audiobook_disc_number = db.Column(db.Integer)
+    audiobook_total_discs = db.Column(db.Integer)
+    open_library_work_key = db.Column(db.String(64))
+    open_library_cover_id = db.Column(db.String(32))
     path = db.Column(db.String(256))
     ejected = db.Column(db.Boolean)
     updated = db.Column(db.Boolean)
@@ -226,9 +231,11 @@ class Job(db.Model):
         :param found_hvdvd_ts:  gets pushed in from utils - saves importing utils
         :return: None
         """
-        if self.disctype == "music":
+        if self.disctype == "music" and not self.manual_mode:
             logging.debug("Disc is music.")
             self.label = music_brainz.main(self)
+        elif self.disctype == "music":
+            logging.debug("Disc is audio; waiting for manual music/audiobook selection.")
         elif _disc_dir_exists(self.mountpoint, "AUDIO_TS") and _listdir_safe(self.mountpoint + "/AUDIO_TS"):
             logging.debug(f"Found: {self.mountpoint}/AUDIO_TS")
             self.disctype = "data"
