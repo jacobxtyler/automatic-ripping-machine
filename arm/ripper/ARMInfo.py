@@ -48,12 +48,13 @@ class ARMInfo:
         """
         branch_len = 10
         cmd = f"cd {self.install_path} && git branch && git log -1"
-        git_output = ProcessHandler.arm_subprocess(cmd, True)
-        git_regex = r"\*\s(\S+)\n(?:\s*\S*\n){1,10}(?:commit )([a-z\d]{5,7})"
-        git_match = re.search(git_regex, git_output)
+        git_output = ProcessHandler.arm_subprocess(cmd, True) or ""
+        branch_match = re.search(r"^\*\s+(\S+)", git_output, re.MULTILINE)
+        commit_match = re.search(r"^commit\s+([a-z\d]{5,7})", git_output, re.MULTILINE)
 
-        if git_match:
-            (self.git_branch, self.git_commit) = git_match.groups()
+        if branch_match and commit_match:
+            self.git_branch = branch_match.group(1)
+            self.git_commit = commit_match.group(1)
             if len(self.git_branch) > branch_len:
                 self.git_branch = self.git_branch[0:branch_len] + "..."
         else:
@@ -62,14 +63,12 @@ class ARMInfo:
 
     def get_arm_version(self):
         try:
-            version_file = open(os.path.join(self.install_path, 'VERSION'))
-
-            try:
+            with open(os.path.join(self.install_path, 'VERSION')) as version_file:
                 self.arm_version = version_file.read().strip()
 
-            except (OSError, IOError) as e:
-                logging.info(f"ARM Version error: {e}")
-                self.arm_version = "unknown"
+        except (OSError, IOError) as e:
+            logging.info(f"ARM Version error: {e}")
+            self.arm_version = "unknown"
 
         except FileNotFoundError:
             self.arm_version = "unknown"
