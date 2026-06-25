@@ -23,11 +23,14 @@ from arm.ui import app, db, constants, json_api
 from arm.models.job import Job, JobState
 from arm.models.notifications import Notifications
 import arm.config.config as cfg
+from arm.ripper import open_library
 from arm.ui.forms import TitleSearchForm, ChangeParamsForm, TrackFormDynamic
 
 route_jobs = Blueprint('route_jobs', __name__,
                        template_folder='templates',
                        static_folder='../static')
+
+OPEN_LIBRARY_COVER_URL = "https://covers.openlibrary.org/b/id/{}-L.jpg"
 
 
 def _positive_int(value, field_name):
@@ -70,6 +73,72 @@ def update_audiobook_metadata(job, form_data):
     job.manual_start = True
 
 
+def is_manual_waiting_job(job):
+    """Return True when a manual job is waiting for user input."""
+    return bool(
+        job
+        and job.manual_mode
+        and job.status == JobState.MANUAL_WAIT_STARTED.value
+        and not job.manual_start
+    )
+
+
+def is_manual_audio_job(job):
+    """Return True when a job is waiting for manual Music/Audiobook input."""
+    return bool(
+        is_manual_waiting_job(job)
+        and job.disctype in ("music", "audiobook")
+    )
+
+
+def audiobook_cover_url(cover_id):
+    """Return an Open Library cover URL for a cover id, or None."""
+    cover_id = str(cover_id or "").strip()
+    return OPEN_LIBRARY_COVER_URL.format(cover_id) if cover_id else None
+
+
+def build_audiobook_query(title, author=""):
+    """Build the Open Library query string from title/author input."""
+    return " ".join(part.strip() for part in (author, title) if part and part.strip())
+
+
+def update_audiobook_title(job, form_data):
+    """Apply audiobook metadata from a title-search selection or manual save."""
+    update_audiobook_metadata(job, form_data)
+    job.disctype = "audiobook"
+    job.video_type = job.video_type_manual = "audiobook"
+    job.imdb_id = job.imdb_id_manual = None
+    job.poster_url = job.poster_url_manual = audiobook_cover_url(job.open_library_cover_id)
+
+
+def title_search_defaults(job):
+    """Return default field values for the shared title-search form."""
+    return {
+        "media_type": "audiobook" if job.disctype == "audiobook" else "video",
+        "title": job.title_manual or job.title or "",
+        "author": job.audiobook_author or "",
+        "year": job.year_manual or job.year or "",
+        "audiobook_disc_number": job.audiobook_disc_number,
+        "audiobook_total_discs": job.audiobook_total_discs,
+        "open_library_work_key": job.open_library_work_key or "",
+        "open_library_cover_id": job.open_library_cover_id or "",
+    }
+
+
+def audiobook_search_form_data(args):
+    """Normalize audiobook search values from request arguments."""
+    return {
+        "media_type": "audiobook",
+        "title": (args.get("title") or "").strip(),
+        "author": (args.get("author") or "").strip(),
+        "year": (args.get("year") or "").strip(),
+        "audiobook_disc_number": (args.get("audiobook_disc_number") or "").strip(),
+        "audiobook_total_discs": (args.get("audiobook_total_discs") or "").strip(),
+        "open_library_work_key": (args.get("open_library_work_key") or "").strip(),
+        "open_library_cover_id": (args.get("open_library_cover_id") or "").strip(),
+    }
+
+
 def update_audio_manual_choice(job, form_data):
     """Apply the manual Music/Audiobook choice for an audio CD."""
     audio_disc_type = form_data.get('audio_disc_type')
@@ -97,6 +166,20 @@ def get_jobdetail_metadata(job):
     return search_results or {"Ratings": [], "Plot": "", "background_url": None}
 
 
+def validate_title_search_input(job, form_data):
+    """Validate title search input for video and audiobook searches."""
+    media_type = form_data.get("media_type")
+
+    if is_manual_audio_job(job) and media_type == "music":
+        return
+
+    if not (form_data.get("title") or "").strip():
+        raise ValueError("Title is required.")
+
+    if media_type == "audiobook" and not (form_data.get("audiobook_disc_number") or "").strip():
+        raise ValueError("Disc number is required for audiobook jobs.")
+
+
 @route_jobs.route('/jobdetail')
 @login_required
 def jobdetail():
@@ -116,7 +199,7 @@ def jobdetail():
         raise ValueError('Job not found')
 
     # Check if a manual job, waiting for input and user has not provided input
-    if job.manual_mode and job.status == JobState.MANUAL_WAIT_STARTED.value and not job.manual_start:
+    if is_manual_waiting_job(job):
         manual_edit = True
 
     # Get Job and Track data
@@ -169,7 +252,7 @@ def jobdetail_load():
 
         db.session.commit()
         if job.disctype == "audiobook":
-            flash("Audiobook selected. Enter audiobook metadata to start ripping.", "success")
+            flash("Audiobook selected. Use Title Search to find or enter audiobook metadata.", "success")
         else:
             flash("Music CD selected", "success")
         return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
@@ -218,12 +301,63 @@ def title_search():
     """
     job_id = request.args.get('job_id')
     job = Job.query.get(job_id)
-    form = TitleSearchForm(request.args)
-    if form.validate():
+    defaults = title_search_defaults(job)
+    if is_manual_audio_job(job):
+        defaults["media_type"] = request.args.get("media_type") or (
+            "audiobook" if job.disctype == "audiobook" else "music"
+        )
+    form = TitleSearchForm(data={**defaults, **request.args.to_dict()})
+
+    if request.args.get("save"):
+        try:
+            validate_title_search_input(job, request.args)
+        except ValueError as error:
+            flash(str(error), "danger")
+            return render_template('titlesearch.html', title='Update Title', form=form, job=job,
+                                   audio_manual_job=is_manual_audio_job(job))
+
+        if is_manual_audio_job(job) and request.args.get("media_type") == "music":
+            update_audio_manual_choice(job, {"audio_disc_type": "music"})
+            db.session.commit()
+            flash("Music CD selected", "success")
+            return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
+
         flash(f'Search for {request.args.get("title")}, year={request.args.get("year")}', 'success')
-        return redirect(url_for('route_jobs.list_titles', title=request.args.get("title"),
-                                year=request.args.get("year"), job_id=job_id))
-    return render_template('titlesearch.html', title='Update Title', form=form, job=job)
+        return redirect(url_for('route_jobs.list_titles',
+                                title=request.args.get("title"),
+                                year=request.args.get("year"),
+                                author=request.args.get("author"),
+                                media_type=request.args.get("media_type"),
+                                audiobook_disc_number=request.args.get("audiobook_disc_number"),
+                                audiobook_total_discs=request.args.get("audiobook_total_discs"),
+                                open_library_work_key=request.args.get("open_library_work_key"),
+                                open_library_cover_id=request.args.get("open_library_cover_id"),
+                                job_id=job_id))
+
+    if request.args.get("manual_save"):
+        form_data = audiobook_search_form_data(request.args)
+        try:
+            validate_title_search_input(job, request.args)
+            update_audiobook_title(job, {
+                "audiobook_author": form_data["author"],
+                "audiobook_title": form_data["title"],
+                "audiobook_disc_number": form_data["audiobook_disc_number"],
+                "audiobook_total_discs": form_data["audiobook_total_discs"],
+                "audiobook_year": form_data["year"],
+                "open_library_work_key": form_data["open_library_work_key"],
+                "open_library_cover_id": form_data["open_library_cover_id"],
+            })
+        except ValueError as error:
+            flash(str(error), "danger")
+            return render_template('titlesearch.html', title='Update Title', form=form, job=job,
+                                   audio_manual_job=is_manual_audio_job(job))
+
+        db.session.commit()
+        flash("Audiobook metadata was updated", "success")
+        return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
+
+    return render_template('titlesearch.html', title='Update Title', form=form, job=job,
+                           audio_manual_job=is_manual_audio_job(job))
 
 
 @route_jobs.route('/customTitle')
@@ -301,6 +435,30 @@ def updatetitle():
     old_year = job.year
     app.logger.debug(f"Old Title and Year: {old_title}, {old_year}")
 
+    if request.args.get("media_type") == "audiobook":
+        form_data = audiobook_search_form_data(request.args)
+        try:
+            update_audiobook_title(job, {
+                "audiobook_author": form_data["author"],
+                "audiobook_title": form_data["title"],
+                "audiobook_disc_number": form_data["audiobook_disc_number"],
+                "audiobook_total_discs": form_data["audiobook_total_discs"],
+                "audiobook_year": form_data["year"],
+                "open_library_work_key": form_data["open_library_work_key"],
+                "open_library_cover_id": form_data["open_library_cover_id"],
+            })
+        except ValueError as error:
+            flash(str(error), "danger")
+            return redirect(url_for('route_jobs.title_search', job_id=job_id, media_type='audiobook'))
+
+        notification = Notifications(f"Job: {job.job_id} was updated",
+                                     f'Title: {old_title} ({old_year}) was updated to '
+                                     f'{request.args.get("title")} ({request.args.get("year")})')
+        db.session.add(notification)
+        db.session.commit()
+        flash(f'Audiobook metadata updated to {request.args.get("title")} ({request.args.get("year")})', "success")
+        return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
+
     app.logger.debug(f"New Title: {request.args.get('title')}")
     new_title = ui_utils.clean_for_filename(request.args.get('title'))
     app.logger.debug(f"Cleaned New Title: {new_title}")
@@ -366,19 +524,45 @@ def list_titles():
         flash(constants.NO_JOB, "danger")
         raise ValidationError
     job = Job.query.get(job_id)
-    form = TitleSearchForm(obj=job)
-    search_results = ui_utils.metadata_selector("search", title, year)
-    if search_results is None or 'Error' in search_results or (
-            'Search' in search_results and len(search_results['Search']) < 1):
-        app.logger.debug("No results found. Trying without year")
-        flash(f"No search results found for {title} ({year})<br/> Trying without year", 'danger')
-        search_results = ui_utils.metadata_selector("search", title, "")
+    media_type = request.args.get('media_type') or ('audiobook' if job.disctype == 'audiobook' else 'video')
+    author = request.args.get('author', '').strip()
+    disc_number = request.args.get('audiobook_disc_number', '').strip()
+    total_discs = request.args.get('audiobook_total_discs', '').strip()
+    work_key = request.args.get('open_library_work_key', '').strip()
+    cover_id = request.args.get('open_library_cover_id', '').strip()
+    form_data = {
+        **title_search_defaults(job),
+        'media_type': media_type,
+        'title': title,
+        'author': author,
+        'year': year,
+        'audiobook_disc_number': disc_number,
+        'audiobook_total_discs': total_discs,
+        'open_library_work_key': work_key,
+        'open_library_cover_id': cover_id,
+    }
+    form = TitleSearchForm(data=form_data)
 
-    if search_results is None or 'Error' in search_results or (
-            'Search' in search_results and len(search_results['Search']) < 1):
-        flash(f"No search results found for {title}", 'danger')
+    if media_type == 'audiobook':
+        search_query = build_audiobook_query(title, author)
+        search_results = {"Search": open_library.search(search_query)}
+        if len(search_results["Search"]) < 1:
+            flash(f"No audiobook search results found for {search_query}", 'danger')
+    else:
+        search_results = ui_utils.metadata_selector("search", title, year)
+        if search_results is None or 'Error' in search_results or (
+                'Search' in search_results and len(search_results['Search']) < 1):
+            app.logger.debug("No results found. Trying without year")
+            flash(f"No search results found for {title} ({year})<br/> Trying without year", 'danger')
+            search_results = ui_utils.metadata_selector("search", title, "")
+
+        if search_results is None or 'Error' in search_results or (
+                'Search' in search_results and len(search_results['Search']) < 1):
+            flash(f"No search results found for {title}", 'danger')
     return render_template('list_titles.html', results=search_results, job_id=job_id,
-                           form=form, title=title, year=year)
+                           form=form, title=title, year=year, author=author, media_type=media_type,
+                           audiobook_disc_number=disc_number, audiobook_total_discs=total_discs,
+                           open_library_work_key=work_key, open_library_cover_id=cover_id)
 
 
 @route_jobs.route('/json', methods=['GET'])

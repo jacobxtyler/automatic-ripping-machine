@@ -10,8 +10,20 @@ class TitleSearchForm(FlaskForm):
       - /titlesearch
       - /customTitle
       - /list_titles"""
-    title = StringField('Title', validators=[DataRequired()])
+    media_type = SelectField('Media Type',
+                             validators=[Optional()],
+                             choices=[
+                                 ('video', 'Video'),
+                                 ('music', 'Music'),
+                                 ('audiobook', 'Audiobook')
+                             ])
+    title = StringField('Title', validators=[Optional()])
+    author = StringField('Author', validators=[Optional()])
     year = StringField('Year')
+    audiobook_disc_number = IntegerField('Disc Number', validators=[Optional()])
+    audiobook_total_discs = IntegerField('Total Discs', validators=[Optional()])
+    open_library_work_key = StringField('Open Library Work Key', validators=[Optional()])
+    open_library_cover_id = StringField('Open Library Cover ID', validators=[Optional()])
     submit = SubmitField('Submit')
 
 

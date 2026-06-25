@@ -364,79 +364,25 @@
                                 {% if manual_edit and jobs.disctype == "music" %}
                                     <div class="mb-3">
                                         <h5>Audio CD Type</h5>
-                                        <div class="input-group mb-3">
-                                            <select class="form-control" id="audio_disc_type" name="audio_disc_type">
-                                                <option value="music">Music</option>
-                                                <option value="audiobook">Audiobook</option>
-                                            </select>
-                                            <div class="input-group-append">
-                                                <button class="btn btn-primary" type="submit">Continue</button>
-                                            </div>
+                                        <div class="btn-group mb-3" role="group">
+                                            <button class="btn btn-primary" type="submit" name="audio_disc_type" value="music">
+                                                Start as Music
+                                            </button>
+                                            <a href="titlesearch?job_id={{ jobs.job_id }}&media_type=audiobook"
+                                               class="btn btn-secondary">
+                                                Audiobook Title Search
+                                            </a>
                                         </div>
                                     </div>
                                 {% endif %}
                                 {% if manual_edit and jobs.disctype == "audiobook" %}
                                     <div class="mb-3">
                                         <h5>Audiobook Metadata</h5>
-                                        <div class="input-group mb-3">
-                                            <input class="form-control" id="open_library_query"
-                                                   name="open_library_query"
-                                                   value="{{ jobs.title_manual or jobs.title or '' }}">
-                                            <div class="input-group-append">
-                                                <button class="btn btn-secondary" type="button"
-                                                        id="open_library_lookup">
-                                                    Open Library
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <select class="form-control" id="open_library_results" style="display:none;">
-                                            </select>
-                                        </div>
-                                        <div class="form-row">
-                                            <div class="form-group col-md-6">
-                                                <label for="audiobook_author">Author</label>
-                                                <input class="form-control" id="audiobook_author"
-                                                       name="audiobook_author"
-                                                       value="{{ jobs.audiobook_author or '' }}" required>
-                                            </div>
-                                            <div class="form-group col-md-6">
-                                                <label for="audiobook_title">Title</label>
-                                                <input class="form-control" id="audiobook_title" name="audiobook_title"
-                                                       value="{{ jobs.title_manual or jobs.title or '' }}" required>
-                                            </div>
-                                        </div>
-                                        <div class="form-row">
-                                            <div class="form-group col-md-3">
-                                                <label for="audiobook_disc_number">Disc Number</label>
-                                                <input class="form-control" id="audiobook_disc_number"
-                                                       name="audiobook_disc_number" type="number" min="1"
-                                                       value="{{ jobs.audiobook_disc_number or '' }}" required>
-                                            </div>
-                                            <div class="form-group col-md-3">
-                                                <label for="audiobook_total_discs">Total Discs</label>
-                                                <input class="form-control" id="audiobook_total_discs"
-                                                       name="audiobook_total_discs" type="number" min="1"
-                                                       value="{{ jobs.audiobook_total_discs or '' }}">
-                                            </div>
-                                            <div class="form-group col-md-3">
-                                                <label for="audiobook_year">Year</label>
-                                                <input class="form-control" id="audiobook_year" name="audiobook_year"
-                                                       value="{{ jobs.year_manual or jobs.year or '' }}" maxlength="4">
-                                            </div>
-                                            <div class="form-group col-md-3">
-                                                <label for="open_library_cover_id">Cover ID</label>
-                                                <input class="form-control" id="open_library_cover_id"
-                                                       name="open_library_cover_id"
-                                                       value="{{ jobs.open_library_cover_id or '' }}">
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label for="open_library_work_key">Open Library Work Key</label>
-                                            <input class="form-control" id="open_library_work_key"
-                                                   name="open_library_work_key"
-                                                   value="{{ jobs.open_library_work_key or '' }}">
-                                        </div>
+                                        <p>Use Title Search to find audiobook metadata from Open Library or save it manually.</p>
+                                        <a href="titlesearch?job_id={{ jobs.job_id }}&media_type=audiobook"
+                                           class="btn btn-secondary">
+                                            Audiobook Title Search
+                                        </a>
                                     </div>
                                 {% endif %}
                                 <table id="tracktable" class="table table-striped" aria-label="Tracks">
@@ -485,7 +431,7 @@
                                     {% endfor %}
                                     </tbody>
                                 </table>
-                                {% if manual_edit  %}
+                                {% if manual_edit and jobs.disctype not in ["music", "audiobook"] %}
                                     {{ form.hidden_tag() }}
                                     <button type="submit" class="btn btn-primary btn-sm" name="submit">Update</button>
                                 {% endif %}
@@ -504,38 +450,6 @@
             $("#posterClick").click(function () {
                 $("#plotInfo").slideToggle(1000);
             });
-            $("#open_library_lookup").click(function () {
-                const query = $("#open_library_query").val();
-                $.getJSON("/json", {mode: "audiobook_search", q: query}, function (data) {
-                    if (data.success === true && data.results.length > 0) {
-                        const resultSelect = $("#open_library_results");
-                        resultSelect.empty();
-                        data.results.forEach(function (result, index) {
-                            const label = `${result.title} - ${result.author} ${result.year}`.trim();
-                            resultSelect.append($("<option>", {
-                                value: index,
-                                text: label,
-                                "data-result": JSON.stringify(result)
-                            }));
-                        });
-                        resultSelect.show();
-                        resultSelect.trigger("change");
-                    }
-                });
-            });
-            $("#open_library_results").change(function () {
-                const selected = $(this).find(":selected");
-                if (!selected.length) {
-                    return;
-                }
-                const result = JSON.parse(selected.attr("data-result"));
-                $("#audiobook_author").val(result.author);
-                $("#audiobook_title").val(result.title);
-                $("#audiobook_year").val(result.year);
-                $("#open_library_work_key").val(result.open_library_work_key);
-                $("#open_library_cover_id").val(result.cover_id);
-            });
-
             // Function to convert seconds to HH:MM:SS format
             function secondsToHHMMSS(seconds) {
                 if (!seconds) return "00:00:00";
