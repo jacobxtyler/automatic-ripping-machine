@@ -875,11 +875,12 @@ def get_git_revision_hash() -> str:
     git_hash: str = 'unknown'
     try:
         git_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
-                                           cwd=cfg.arm_config['INSTALLPATH']).decode('ascii').strip()
+                                           cwd=cfg.arm_config['INSTALLPATH'],
+                                           timeout=10).decode('ascii').strip()
         # Trunkate to seven characters (aligns with the github commit values reported)
         git_hash = git_hash[:7]
         app.logger.debug(f"GIT revision: {git_hash}")
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         app.logger.debug(f"GIT revision error: {e}")
 
     return git_hash
@@ -890,8 +891,8 @@ def get_git_revision_short_hash() -> str:
     git_hash: str = 'unknown'
     try:
         subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'],
-                                cwd=cfg.arm_config['INSTALLPATH']).decode('ascii').strip()
-    except subprocess.CalledProcessError as e:
+                                cwd=cfg.arm_config['INSTALLPATH'], timeout=10).decode('ascii').strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         app.logger.debug(f"GIT revision error: {e}")
 
     return git_hash
@@ -944,6 +945,7 @@ def git_check_version():
     """
 
     install_path = cfg.arm_config['INSTALLPATH']
+    local_version = "Unknown"
 
     # Read the local version from the VERSION file
     version_file_path = os.path.join(install_path, 'VERSION')
@@ -958,9 +960,9 @@ def git_check_version():
     # Read the remote version from Git (without modifying local files)
     try:
         remote_version = subprocess.check_output(
-            'git show origin/HEAD:VERSION', shell=True, cwd=install_path
+            'git show origin/HEAD:VERSION', shell=True, cwd=install_path, timeout=10
         ).decode('ascii').strip()
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         app.logger.debug(f"Error - ARM Remote Version error: {e}")
         remote_version = "Unknown"
 

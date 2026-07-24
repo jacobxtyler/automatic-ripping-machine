@@ -12,12 +12,9 @@
                         </li>
                         <li class="list-group-item">
                             Python version: <code>{{ stats['python_version'] }}</code><br>
-                            A.R.M version: <code>{{ stats['arm_version_local'] }}</code><br>
-                            {% if not stats['updated'] %}
-                                <i>&nbsp;<a href="https://github.com/automatic-ripping-machine/automatic-ripping-machine/wiki/Docker-Upgrading" target="_blank">Update available</a>,
-                                    Version:</i> <code>{{ stats['arm_version_remote'] }}</code><br>
-                            {% endif %}
-                            Current git version: <code>{{ stats['git_commit'] }}</code><br>
+                            A.R.M version: <code data-diagnostic="local_version">Checking...</code><br>
+                            <span data-diagnostic="update_message">Checking for updates...</span><br>
+                            Current git version: <code data-diagnostic="git_commit">Checking...</code><br>
                         </li>
                         <!-- Rip stats -->
                         <li class="list-group-item">

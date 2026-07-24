@@ -55,6 +55,29 @@ class TestProcessHandler(unittest.TestCase):
             encoding="utf-8"
         )
 
+    @patch("subprocess.check_output")
+    def test_arm_subprocess_forwards_timeout(self, mock_check_output):
+        mock_check_output.return_value = "done"
+
+        result = arm_subprocess(["slow-command"], timeout=10)
+
+        self.assertEqual(result, "done")
+        mock_check_output.assert_called_once_with(
+            ["slow-command"],
+            shell=False,
+            stderr=process_subprocess.STDOUT,
+            encoding="utf-8",
+            timeout=10,
+        )
+
+    @patch("subprocess.check_output")
+    def test_arm_subprocess_timeout(self, mock_check_output):
+        mock_check_output.side_effect = subprocess.TimeoutExpired(["slow-command"], 10)
+
+        self.assertIsNone(arm_subprocess(["slow-command"], timeout=10))
+        with self.assertRaises(subprocess.TimeoutExpired):
+            arm_subprocess(["slow-command"], check=True, timeout=10)
+
 
 if __name__ == '__main__':
     unittest.main()

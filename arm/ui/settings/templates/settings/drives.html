@@ -42,41 +42,29 @@
                                                 </div>
                                                 <div class="col-sm-3">
                                                     <figure class="figure small float-right">
-                                                        <!-- drive.tray queries (live) kernel drive status (blocking) -->
-                                                        {% if drive.stale or drive.tray is none %}
+                                                        {% if drive.stale %}
                                                             <!-- image modified from source: https://openclipart.org/detail/36619/tango-audio-volume-muted -->
                                                             <img
                                                                 class="img-fluid"
                                                                 src="static/img/drive-optical_stale.svg"
                                                                 alt="Drive Unavailable"
-                                                                {% if drive.stale %}
-                                                                    title="stale"
-                                                                {% else %}
-                                                                    title="{{ drive.tray }}"
-                                                                {% endif %}
+                                                                title="Drive unavailable"
                                                             >
-                                                        {% elif drive.open %}
-                                                            <!-- image from source: https://openclipart.org/detail/34543/tango-drive-optical -->
-                                                            <a href="drive/eject/{{ drive.drive_id }}">
-                                                                <img
-                                                                    class="img-fluid"
-                                                                    src="static/img/drive-optical_open.svg"
-                                                                    alt="Drive Open"
-                                                                    title="{{ drive.tray }}"
-                                                                >
-                                                            </a>
+                                                        {% elif drive.job_id_current %}
+                                                            <img
+                                                                class="img-fluid"
+                                                                src="static/img/drive-optical_closed_processing.svg"
+                                                                alt="Drive Processing"
+                                                                title="Drive processing"
+                                                            >
                                                         {% else %}
-                                                            <a href="drive/eject/{{ drive.drive_id }}">
+                                                            <a href="{{ url_for('route_settings.drive_eject', eject_id=drive.drive_id) }}">
                                                                 <!-- image modified from source: https://openclipart.org/detail/86713/cycle-icon -->
                                                                 <img
                                                                     class="img-fluid"
-                                                                    {% if drive.processing %}
-                                                                        src="static/img/drive-optical_closed_processing.svg"
-                                                                    {% else %}
-                                                                        src="static/img/drive-optical_closed.svg"
-                                                                    {% endif %}
-                                                                    alt="Drive Closed"
-                                                                    title="{{ drive.tray }}"
+                                                                    src="static/img/drive-optical_closed.svg"
+                                                                    alt="Drive Available"
+                                                                    title="Toggle drive tray"
                                                                 >
                                                             </a>
                                                         {% endif %}
