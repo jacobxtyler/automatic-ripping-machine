@@ -55,3 +55,110 @@ and also iPads specifically.
         white-space: pre;
     }
 }
+
+.title-row {
+    text-align: left;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.title-selector .selectable-title {
+    cursor: pointer;
+}
+
+.title-row:focus-within,
+.title-row:hover {
+    border-color: #446e9b;
+    box-shadow: 0 0 0 1px rgba(68, 110, 155, 0.2);
+}
+
+.title-checkbox {
+    width: 1.6rem;
+    height: 1.6rem;
+}
+
+.title-checkbox-label {
+    cursor: pointer;
+}
+
+.title-badges .badge {
+    margin: 0 0 0.35rem 0.25rem;
+    font-size: 0.8rem;
+}
+
+.title-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+    gap: 0.65rem 1rem;
+    margin: 0;
+}
+
+.title-fields > div {
+    min-width: 0;
+}
+
+.title-fields dt {
+    color: #555;
+    font-size: 0.75rem;
+    letter-spacing: 0.025em;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+.title-fields dd {
+    color: inherit;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.title-fields .title-output,
+.title-fields .segment-map {
+    grid-column: span 2;
+}
+
+.equal-runtime {
+    border-left: 5px solid #d47500;
+}
+
+.field-difference {
+    background: rgba(212, 117, 0, 0.12);
+    border-radius: 0.2rem;
+    padding: 0.25rem 0.4rem;
+}
+
+.title-details summary {
+    color: #446e9b;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+@media only screen and (max-width: 760px) {
+    .title-selection-controls {
+        display: flex;
+        width: 100%;
+    }
+
+    .title-selection-controls .btn {
+        flex: 1 1 auto;
+        padding-left: 0.35rem;
+        padding-right: 0.35rem;
+    }
+
+    .title-row-heading {
+        align-items: flex-start;
+    }
+
+    .title-fields {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    #tracktable td {
+        padding-left: 45%;
+    }
+
+    #tracktable td::before {
+        content: attr(data-label);
+        font-weight: bold;
+        left: 0.75rem;
+        position: absolute;
+    }
+}

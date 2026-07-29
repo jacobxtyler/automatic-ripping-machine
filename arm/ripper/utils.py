@@ -719,7 +719,9 @@ def try_add_default_user():
 
 
 def put_track(job, t_no, seconds, aspect, fps, mainfeature, source, filename="",
-              chapters=0, filesize=0):
+              chapters=0, filesize=0, playlist_id=None, segment_count=None,
+              segment_map=None, video_resolution=None, video_codec=None,
+              audio_languages=None, subtitle_languages=None):
     """
     Put data into a track instance.\n
     Having this here saves importing the models file everywhere\n
@@ -752,7 +754,14 @@ def put_track(job, t_no, seconds, aspect, fps, mainfeature, source, filename="",
         basename=job.title,
         filename=filename,
         chapters=chapters,
-        filesize=filesize
+        filesize=filesize,
+        playlist_id=playlist_id,
+        segment_count=segment_count,
+        segment_map=segment_map,
+        video_resolution=video_resolution,
+        video_codec=video_codec,
+        audio_languages=audio_languages,
+        subtitle_languages=subtitle_languages
     )
     job_track.ripped = (seconds > int(job.config.MINLENGTH))
     database_adder(job_track)

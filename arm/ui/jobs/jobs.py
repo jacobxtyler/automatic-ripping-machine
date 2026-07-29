@@ -83,6 +83,137 @@ def is_manual_waiting_job(job):
     )
 
 
+def apply_manual_track_selection(job, submitted_tracks):
+    """Validate and atomically stage a manual video title selection."""
+    if not is_manual_waiting_job(job):
+        raise ValueError("This job is no longer waiting for title selection.")
+
+    job_tracks = {track.track_id: track for track in job.tracks.all()}
+    selected_ids = set()
+    submitted_ids = set()
+    for track_id, selected in submitted_tracks:
+        try:
+            track_id = int(track_id)
+        except (TypeError, ValueError) as error:
+            raise ValueError("The submitted title selection is invalid.") from error
+        if track_id in submitted_ids or track_id not in job_tracks:
+            raise ValueError("The submitted title selection contains an invalid title.")
+        submitted_ids.add(track_id)
+        if selected:
+            selected_ids.add(track_id)
+
+    if not selected_ids:
+        raise ValueError("Select at least one title to rip.")
+
+    for track_id, track in job_tracks.items():
+        track.process = track_id in selected_ids
+    job.manual_start = True
+    return len(selected_ids)
+
+
+def _track_status(job, track):
+    """Return a user-facing track status without relying on eligibility's `ripped` flag."""
+    if track.status == JobState.FAILURE.value or (
+            job.status == JobState.FAILURE.value and track.process):
+        return "Failed", "danger"
+    if track.status == JobState.SUCCESS.value:
+        return "Completed", "success"
+    if job.status == JobState.SUCCESS.value and track.process:
+        return "Completed", "success"
+    if track.process:
+        return "Selected", "primary"
+    return "Skipped", "secondary"
+
+
+def _format_duration(length, is_audio=False):
+    if not length:
+        return "—"
+    seconds = round(length / 1000) if is_audio else int(length)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes:02d}:{seconds:02d}"
+
+
+def _format_filesize(filesize):
+    if not filesize:
+        return "—"
+    value = float(filesize)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if value < 1024 or unit == "TiB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return "—"
+
+
+def build_track_views(job, tracks):
+    """Build display data and duplicate-runtime comparisons for track rows."""
+    is_audio = job.disctype in ("music", "audiobook")
+    try:
+        minimum = int(job.config.MINLENGTH)
+    except (TypeError, ValueError):
+        minimum = 0
+    try:
+        maximum = int(job.config.MAXLENGTH)
+    except (TypeError, ValueError):
+        maximum = 99999
+
+    recommended = next((track for track in tracks if track.main_feature), None)
+    if recommended is None and tracks and not is_audio:
+        recommended = max(
+            tracks,
+            key=lambda track: (
+                track.chapters or 0,
+                track.filesize or 0,
+                -int(track.track_number) if str(track.track_number).isdigit() else 0,
+            ),
+        )
+
+    comparison_fields = (
+        "chapters", "filesize", "playlist_id", "segment_count", "segment_map",
+        "video_resolution", "video_codec", "audio_languages", "subtitle_languages",
+        "aspect_ratio", "fps", "source", "output_filename",
+    )
+
+    def comparison_value(track, field):
+        if field == "output_filename":
+            return track.new_filename or track.filename or track.orig_filename or None
+        return getattr(track, field, None) or None
+
+    runtime_groups = {}
+    for track in tracks:
+        runtime_groups.setdefault(track.length, []).append(track)
+    differing_by_length = {}
+    for length, group in runtime_groups.items():
+        if length and len(group) > 1:
+            differing_by_length[length] = {
+                field for field in comparison_fields
+                if len({comparison_value(track, field) for track in group}) > 1
+            }
+
+    views = []
+    for track in tracks:
+        status, status_class = _track_status(job, track)
+        views.append({
+            "track": track,
+            "duration": _format_duration(track.length, is_audio),
+            "filesize": _format_filesize(track.filesize),
+            "chapters": track.chapters or "—",
+            "fps": f"{track.fps:g}" if track.fps else "—",
+            "aspect": track.aspect_ratio or "—",
+            "resolution": track.video_resolution or "—",
+            "source": track.source or "—",
+            "output_filename": track.new_filename or track.filename or track.orig_filename or "—",
+            "recommended": recommended is track,
+            "meets_minimum": bool(track.length and track.length >= minimum),
+            "eligible": bool(track.length and minimum <= track.length <= maximum),
+            "equal_runtime": track.length in differing_by_length,
+            "differing_fields": differing_by_length.get(track.length, set()),
+            "status": status,
+            "status_class": status_class,
+        })
+    return views
+
+
 def is_manual_audio_job(job):
     """Return True when a job is waiting for manual Music/Audiobook input."""
     return bool(
@@ -204,6 +335,7 @@ def jobdetail():
 
     # Get Job and Track data
     tracks = job.tracks.all()
+    track_views = build_track_views(job, tracks)
     track_form.track_ref.min_entries = len(tracks)
     app.logger.debug(f"Found [{len(tracks)}] tracks")
     track_form.track_ref.entries.clear()
@@ -225,6 +357,7 @@ def jobdetail():
     return render_template('jobdetail.html',
                            jobs=job,
                            tracks=tracks,
+                           track_views=track_views,
                            s=search_results,
                            manual_edit=manual_edit,
                            form=track_form)
@@ -242,8 +375,14 @@ def jobdetail_load():
 
     job_id = request.args.get('job_id')
     job = Job.query.get(job_id)
+    if job is None:
+        flash("Job not found", "danger")
+        return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
 
     if request.method == 'POST' and request.form.get('audio_disc_type'):
+        if not is_manual_waiting_job(job):
+            flash("This job is no longer waiting for manual input.", "danger")
+            return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
         try:
             update_audio_manual_choice(job, request.form)
         except ValueError as error:
@@ -258,6 +397,9 @@ def jobdetail_load():
         return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
 
     if request.method == 'POST' and job.disctype == "audiobook":
+        if not is_manual_waiting_job(job):
+            flash("This job is no longer waiting for manual input.", "danger")
+            return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
         try:
             update_audiobook_metadata(job, request.form)
         except ValueError as error:
@@ -273,22 +415,20 @@ def jobdetail_load():
     if request.method == 'POST' and track_form.validate_on_submit():
         app.logger.debug(f"Job id [{job.job_id}]")
         app.logger.debug(f"Returned [{len(track_form.track_ref.entries)}] tracks")
-        for track_row in track_form.track_ref.entries:
-            # app.logger.debug(f"Track deets [{track_row}]")
-            track_id = track_row.data['track_ref']
-            checkbox_value = track_row.data['checkbox']
-            app.logger.debug(f"Setting [{track_id}] to [{checkbox_value}]")
-
-            db_track = job.tracks.filter_by(track_id=track_id).first()
-            if db_track:
-                db_track.process = checkbox_value
-                db.session.commit()
-
-        # Set job to ready
-        job.manual_start = True
+        submitted_tracks = [
+            (track_row.data["track_ref"], track_row.data["checkbox"])
+            for track_row in track_form.track_ref.entries
+        ]
+        try:
+            selected_count = apply_manual_track_selection(job, submitted_tracks)
+        except ValueError as error:
+            flash(str(error), "danger")
+            return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
         db.session.commit()
         app.logger.debug(f"Setting [{job.job_id}] to [{job.manual_start}], lets get ripping")
-        flash("Tracks was updated", "success")
+        flash(f"{selected_count} title(s) selected for ripping", "success")
+    elif request.method == 'POST':
+        flash("The submitted title selection is invalid.", "danger")
 
     return redirect(url_for('route_jobs.jobdetail', job_id=job_id))
 

@@ -33,6 +33,8 @@ MAKEMKV_UNKNOWN_DRV = 999
 """Currently the value is always 999"""
 
 MAKEMKV_STREAM_CODE_TYPE_VIDEO = 6201
+MAKEMKV_STREAM_CODE_TYPE_AUDIO = 6202
+MAKEMKV_STREAM_CODE_TYPE_SUBTITLE = 6203
 """Identifies the stream as a Video stream"""
 MAX_DEVICES = 16
 """MakeMKV Optical Devices Limit"""
@@ -173,6 +175,11 @@ class StreamID(enum.IntEnum):
     """
     UNKNOWN = 0
     TYPE = 1
+    LANGUAGE_CODE = 3
+    LANGUAGE_NAME = 4
+    CODEC_ID = 5
+    CODEC_SHORT = 6
+    RESOLUTION = 19
     ASPECT = 20
     FPS = 21
 
@@ -184,6 +191,9 @@ class TrackID(enum.IntEnum):
     CHAPTERS = 8
     DURATION = 9
     FILESIZE = 11
+    PLAYLIST = 16
+    SEGMENT_COUNT = 25
+    SEGMENT_MAP = 26
     FILENAME = 27
 
 
@@ -671,6 +681,9 @@ def makemkv_mkv(job, rawpath):
         logging.info("Trying to find mainfeature (sorting by chapters desc, filesize desc, track_number asc)")
         track = Track.query.filter_by(job_id=job.job_id).order_by(
             Track.chapters.desc(), Track.filesize.desc(), Track.track_number.asc()).first()
+        track.main_feature = True
+        track.process = True
+        db.session.commit()
         rip_mainfeature(job, track, rawpath)
     elif mode == 'manual':  # Run if mode is manual, user selects tracks
         # Set job status to waiting
@@ -948,6 +961,10 @@ class TrackInfoProcessor:
         self.stream_type = None
         self.chapters = 0
         self.filesize = 0
+        self.playlist_id = None
+        self.segment_count = None
+        self.segment_map = None
+        self.streams = {}
 
     def process_messages(self):
         output_types = (
@@ -984,9 +1001,23 @@ class TrackInfoProcessor:
             self._handle_tinfo(message)
 
     def _handle_sinfo(self, message):
+        stream = self.streams.setdefault(message.sid, {})
         if message.id == StreamID.TYPE:
             self.stream_type = message.code
-        elif self.stream_type == MAKEMKV_STREAM_CODE_TYPE_VIDEO:
+            stream["type_code"] = message.code
+            stream["type"] = message.value.strip()
+        elif message.id == StreamID.LANGUAGE_CODE:
+            stream["language_code"] = message.value.strip()
+        elif message.id == StreamID.LANGUAGE_NAME:
+            stream["language"] = message.value.strip()
+        elif message.id == StreamID.CODEC_ID:
+            stream["codec_id"] = message.value.strip()
+        elif message.id == StreamID.CODEC_SHORT:
+            stream["codec"] = message.value.strip()
+        elif message.id == StreamID.RESOLUTION:
+            stream["resolution"] = message.value.strip()
+
+        if stream.get("type_code") == MAKEMKV_STREAM_CODE_TYPE_VIDEO:
             if message.id == StreamID.ASPECT:
                 self.aspect = message.value.strip()
             elif message.id == StreamID.FPS:
@@ -1002,6 +1033,12 @@ class TrackInfoProcessor:
             self.chapters = int(message.value.strip())
         elif message.id == TrackID.FILESIZE:
             self.filesize = int(message.value.strip())
+        elif message.id == TrackID.PLAYLIST:
+            self.playlist_id = message.value.strip()
+        elif message.id == TrackID.SEGMENT_COUNT:
+            self.segment_count = int(message.value.strip())
+        elif message.id == TrackID.SEGMENT_MAP:
+            self.segment_map = message.value.strip()
 
     def _handle_titles(self, message):
         logging.info(f"Found {message.count:d} titles")
@@ -1010,6 +1047,13 @@ class TrackInfoProcessor:
     def _add_track(self):
         if self.track_id is None:
             return
+        video_stream = next((
+            stream for stream in self.streams.values()
+            if stream.get("type_code") == MAKEMKV_STREAM_CODE_TYPE_VIDEO
+            or stream.get("type", "").lower() == "video"
+        ), {})
+        audio_summary = self._stream_summary("audio")
+        subtitle_summary = self._stream_summary("subtitle")
         utils.put_track(
             self.job,
             self.track_id,
@@ -1020,7 +1064,14 @@ class TrackInfoProcessor:
             SOURCE,
             self.filename,
             self.chapters,
-            self.filesize
+            self.filesize,
+            playlist_id=self.playlist_id,
+            segment_count=self.segment_count,
+            segment_map=self.segment_map,
+            video_resolution=video_stream.get("resolution"),
+            video_codec=video_stream.get("codec") or video_stream.get("codec_id"),
+            audio_languages=audio_summary,
+            subtitle_languages=subtitle_summary
         )
         # Reset track info after adding if needed
         self.seconds = 0
@@ -1029,6 +1080,29 @@ class TrackInfoProcessor:
         self.filename = ""
         self.chapters = 0
         self.filesize = 0
+        self.playlist_id = None
+        self.segment_count = None
+        self.segment_map = None
+        self.stream_type = None
+        self.streams = {}
+
+    def _stream_summary(self, stream_type):
+        """Return a compact, de-duplicated language/codec stream summary."""
+        summaries = []
+        expected_code = {
+            "audio": MAKEMKV_STREAM_CODE_TYPE_AUDIO,
+            "subtitle": MAKEMKV_STREAM_CODE_TYPE_SUBTITLE,
+        }[stream_type]
+        for stream in self.streams.values():
+            type_name = stream.get("type", "").lower()
+            if stream.get("type_code") != expected_code and not type_name.startswith(stream_type):
+                continue
+            language = stream.get("language") or stream.get("language_code") or "Unknown"
+            codec = stream.get("codec") or stream.get("codec_id")
+            summary = f"{language} ({codec})" if codec else language
+            if summary not in summaries:
+                summaries.append(summary)
+        return ", ".join(summaries) or None
 
 
 def get_track_info(index, job):

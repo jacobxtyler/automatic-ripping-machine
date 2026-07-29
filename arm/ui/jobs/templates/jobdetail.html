@@ -385,55 +385,161 @@
                                         </a>
                                     </div>
                                 {% endif %}
-                                <table id="tracktable" class="table table-striped" aria-label="Tracks">
-                                    <thead class="bg-secondary">
-                                    <tr>
-                                        <th scope="col" style="text-align:left">Track #</th>
-                                        {% if jobs.disctype in ["music", "audiobook"] %}
-                                            <th scope="col" style="text-align:left">Track Name</th>
-                                        {% endif %}
-                                        <th scope="col" style="text-align:left">
-                                            <button type="button" id="toggle-time-format" class="btn btn-primary" title="Click to toggle time format">
-                                                <span id="time-format-label">seconds</span>
-                                            </button>
-                                        </th>
-                                        <th scope="col" style="text-align:left">FPS</th>
-                                        <th scope="col" style="text-align:left">Aspect Ratio</th>
-                                        <th scope="col" style="text-align:left">Main Feature</th>
-                                        {% if jobs.disctype not in ["music", "audiobook"] %}
-                                            <th scope="col" style="text-align:left">Manual Process</th>
-                                        {% endif %}
-                                        <th scope="col" style="text-align:left">Ripped</th>
-                                    </tr>
-                                    </thead>
-                                    <tbody>
-                                    {% for track in tracks %}
-                                        <tr>
-                                            <td style="text-align:left"><strong>{{ track.track_number }}</strong></td>
-                                            {% if jobs.disctype in ["music", "audiobook"] %}
-                                                <td style="text-align:left"><strong>{{ track.filename}}</strong></td>
+                                {% if jobs.disctype not in ["music", "audiobook"] %}
+                                    <section class="title-selector" aria-labelledby="title-selector-heading">
+                                        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3">
+                                            <div>
+                                                <h4 id="title-selector-heading">
+                                                    {{ "Choose titles to rip" if manual_edit else "Title status" }}
+                                                </h4>
+                                                {% if manual_edit %}
+                                                    <p class="mb-0">Compare title details, then select every title you want to rip.</p>
+                                                {% endif %}
+                                            </div>
+                                            {% if manual_edit and track_views %}
+                                                <div class="title-selection-controls btn-group mt-2" role="group"
+                                                     aria-label="Title selection shortcuts">
+                                                    <button type="button" class="btn btn-outline-primary"
+                                                            id="select-recommended">Select recommended</button>
+                                                    <button type="button" class="btn btn-outline-primary"
+                                                            id="select-eligible">Select eligible</button>
+                                                    <button type="button" class="btn btn-outline-secondary"
+                                                            id="clear-selection">Clear selection</button>
+                                                </div>
                                             {% endif %}
-                                            <td style="text-align:left">
-                                                <span class="length-seconds">{{ track.length }}{{ " (Milliseconds)" if jobs.disctype in ["music", "audiobook"] else "" }}</span>
-                                                <span class="length-formatted" style="display:none;" data-seconds="{{ track.length }}"></span>
-                                            </td>
-                                            <td style="text-align:left">{{ track.fps }}</td>
-                                            <td style="text-align:left">{{ track.aspect_ratio }}</td>
-                                            <td style="text-align:left">{{ track.main_feature }}</td>
-                                            {% if jobs.disctype not in ["music", "audiobook"] %}
-                                                <td style="text-align:center">
-                                                        {{ form.track_ref[loop.index0].checkbox }}
-                                                        {{ form.track_ref[loop.index0].track_ref }}
+                                        </div>
+
+                                        {% if not track_views %}
+                                            <div class="alert alert-secondary">No title information is available for this job.</div>
+                                        {% endif %}
+
+                                        {% for view in track_views %}
+                                            {% set track = view.track %}
+                                            <article class="title-row card mb-3{{ ' selectable-title' if manual_edit else '' }}{{ ' equal-runtime' if view.equal_runtime else '' }}"
+                                                     data-recommended="{{ 'true' if view.recommended else 'false' }}"
+                                                     data-eligible="{{ 'true' if view.eligible else 'false' }}">
+                                                <div class="card-body">
+                                                    <div class="title-row-heading d-flex align-items-start">
+                                                        {% if manual_edit %}
+                                                            <div class="title-checkbox-wrap mr-3">
+                                                                {{ form.track_ref[loop.index0].checkbox(
+                                                                    class_="title-checkbox",
+                                                                    aria_label="Rip title " ~ track.track_number
+                                                                ) }}
+                                                                {{ form.track_ref[loop.index0].track_ref }}
+                                                            </div>
+                                                        {% endif %}
+                                                        <div class="flex-grow-1">
+                                                            <div class="d-flex flex-wrap justify-content-between align-items-start">
+                                                                <label class="h5 mb-2{{ ' title-checkbox-label' if manual_edit else '' }}"
+                                                                       {% if manual_edit %}for="{{ form.track_ref[loop.index0].checkbox.id }}"{% endif %}>
+                                                                    {{ "Rip this title" if manual_edit else "Title" }}
+                                                                    {{ track.track_number }}
+                                                                </label>
+                                                                <div class="title-badges">
+                                                                    {% if view.recommended %}
+                                                                        <span class="badge badge-info">Recommended</span>
+                                                                    {% endif %}
+                                                                    {% if manual_edit and view.meets_minimum %}
+                                                                        <span class="badge badge-success">Meets minimum length</span>
+                                                                    {% elif not manual_edit %}
+                                                                        <span class="badge badge-{{ view.status_class }}">{{ view.status }}</span>
+                                                                    {% endif %}
+                                                                    {% if view.equal_runtime %}
+                                                                        <span class="badge badge-warning">Same duration</span>
+                                                                    {% endif %}
+                                                                </div>
+                                                            </div>
+                                                            <dl class="title-fields">
+                                                                <div><dt>Duration</dt><dd>{{ view.duration }}</dd></div>
+                                                                <div class="{{ 'field-difference' if 'chapters' in view.differing_fields else '' }}">
+                                                                    <dt>Chapters</dt><dd>{{ view.chapters }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'filesize' in view.differing_fields else '' }}">
+                                                                    <dt>Estimated size</dt><dd>{{ view.filesize }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'video_resolution' in view.differing_fields else '' }}">
+                                                                    <dt>Resolution</dt><dd>{{ view.resolution }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'aspect_ratio' in view.differing_fields else '' }}">
+                                                                    <dt>Aspect ratio</dt><dd>{{ view.aspect }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'fps' in view.differing_fields else '' }}">
+                                                                    <dt>FPS</dt><dd>{{ view.fps }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'source' in view.differing_fields else '' }}">
+                                                                    <dt>Source</dt><dd>{{ view.source }}</dd>
+                                                                </div>
+                                                                <div class="title-output {{ 'field-difference' if 'output_filename' in view.differing_fields else '' }}">
+                                                                    <dt>Output filename</dt><dd>{{ view.output_filename }}</dd>
+                                                                </div>
+                                                            </dl>
+                                                        </div>
+                                                    </div>
+                                                    {% if track.playlist_id or track.segment_count or track.segment_map
+                                                          or track.video_codec or track.audio_languages
+                                                          or track.subtitle_languages %}
+                                                        <details class="title-details mt-2">
+                                                            <summary>Stream and segment details</summary>
+                                                            <dl class="title-fields mt-2">
+                                                                <div class="{{ 'field-difference' if 'playlist_id' in view.differing_fields else '' }}">
+                                                                    <dt>Playlist</dt><dd>{{ track.playlist_id or "—" }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'segment_count' in view.differing_fields else '' }}">
+                                                                    <dt>Segments</dt><dd>{{ track.segment_count or "—" }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'video_codec' in view.differing_fields else '' }}">
+                                                                    <dt>Video codec</dt><dd>{{ track.video_codec or "—" }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'audio_languages' in view.differing_fields else '' }}">
+                                                                    <dt>Audio</dt><dd>{{ track.audio_languages or "—" }}</dd>
+                                                                </div>
+                                                                <div class="{{ 'field-difference' if 'subtitle_languages' in view.differing_fields else '' }}">
+                                                                    <dt>Subtitles</dt><dd>{{ track.subtitle_languages or "—" }}</dd>
+                                                                </div>
+                                                                <div class="segment-map {{ 'field-difference' if 'segment_map' in view.differing_fields else '' }}">
+                                                                    <dt>Segment map</dt><dd>{{ track.segment_map or "—" }}</dd>
+                                                                </div>
+                                                            </dl>
+                                                        </details>
+                                                    {% endif %}
+                                                </div>
+                                            </article>
+                                        {% endfor %}
+
+                                        {% if manual_edit and track_views %}
+                                            {{ form.hidden_tag() }}
+                                            <div class="selection-submit mt-3">
+                                                <p id="selection-summary" class="font-weight-bold mb-2" aria-live="polite">
+                                                    0 titles selected
+                                                </p>
+                                                <p class="text-warning mb-2">
+                                                    This selection can only be submitted once. Check it carefully before continuing.
+                                                </p>
+                                                <button type="submit" class="btn btn-primary" id="rip-selected" name="submit">
+                                                    Rip selected titles
+                                                </button>
+                                            </div>
+                                        {% endif %}
+                                    </section>
+                                {% else %}
+                                    <table id="tracktable" class="table table-striped" aria-label="Audio tracks">
+                                        <thead class="bg-secondary">
+                                        <tr><th>Track</th><th>Name</th><th>Duration</th><th>Status</th></tr>
+                                        </thead>
+                                        <tbody>
+                                        {% for view in track_views %}
+                                            <tr>
+                                                <td data-label="Track">{{ view.track.track_number }}</td>
+                                                <td data-label="Name">{{ view.track.filename or "—" }}</td>
+                                                <td data-label="Duration">{{ view.duration }}</td>
+                                                <td data-label="Status">
+                                                    <span class="badge badge-{{ view.status_class }}">{{ view.status }}</span>
                                                 </td>
-                                            {% endif %}
-                                            <td style="text-align:left">{{ track.ripped }}</td>
-                                        </tr>
-                                    {% endfor %}
-                                    </tbody>
-                                </table>
-                                {% if manual_edit and jobs.disctype not in ["music", "audiobook"] %}
-                                    {{ form.hidden_tag() }}
-                                    <button type="submit" class="btn btn-primary btn-sm" name="submit">Update</button>
+                                            </tr>
+                                        {% endfor %}
+                                        </tbody>
+                                    </table>
                                 {% endif %}
                             </form>
                         </div>
@@ -450,62 +556,40 @@
             $("#posterClick").click(function () {
                 $("#plotInfo").slideToggle(1000);
             });
-            // Function to convert seconds to HH:MM:SS format
-            function secondsToHHMMSS(seconds) {
-                if (!seconds) return "00:00:00";
-                
-                // Check if the video type is Music (which stores duration in milliseconds)
-                const isMusic = ["music", "audiobook"].includes("{{ jobs.disctype }}");
-                let secondsValue = parseInt(seconds, 10);
-                
-                // Convert milliseconds to seconds for music tracks
-                if (isMusic) {
-                    secondsValue = Math.round(secondsValue / 1000);
-                }
-                
-                const hours = Math.floor(secondsValue / 3600);
-                const minutes = Math.floor((secondsValue % 3600) / 60);
-                const remainingSeconds = Math.floor(secondsValue % 60);
-                
-                // If it's a short track with no hours, just show MM:SS
-                if (hours === 0) {
-                    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-                }
-                
-                return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+            const checkboxes = $('.title-checkbox');
+
+            function updateSelectionSummary() {
+                const count = checkboxes.filter(':checked').length;
+                const noun = count === 1 ? 'title' : 'titles';
+                $('#selection-summary').text(`${count} ${noun} selected`);
+                $('#rip-selected').text(count ? `Rip ${count} selected ${noun}` : 'Rip selected titles');
             }
 
-            // Convert all length values to HH:MM:SS and store them
-            $('.length-formatted').each(function() {
-                const seconds = $(this).data('seconds');
-                $(this).text(secondsToHHMMSS(seconds));
-            });
-
-            // Handle time format toggle
-            let showFormatted = false;
-            $('#toggle-time-format').click(function() {
-                showFormatted = !showFormatted;
-                if (showFormatted) {
-                    $('.length-seconds').hide();
-                    $('.length-formatted').show();
-                    $('#time-format-label').text('HH:MM:SS');
-                } else {
-                    $('.length-seconds').show();
-                    $('.length-formatted').hide();
-                    $('#time-format-label').text('seconds');
-                }
-                
-                // Store preference in local storage
-                localStorage.setItem('arm_show_formatted_time', showFormatted);
-            });
-            
-            // Check if there's a saved preference
-            if (localStorage.getItem('arm_show_formatted_time') === 'true') {
-                showFormatted = true;
-                $('.length-seconds').hide();
-                $('.length-formatted').show();
-                $('#time-format-label').text('HH:MM:SS');
+            function selectRows(predicate) {
+                checkboxes.prop('checked', false);
+                $('.title-row').filter(predicate).find('.title-checkbox').prop('checked', true);
+                updateSelectionSummary();
             }
+
+            checkboxes.on('change', updateSelectionSummary);
+            $('#select-recommended').on('click', function () {
+                selectRows(function () { return $(this).data('recommended') === true; });
+            });
+            $('#select-eligible').on('click', function () {
+                selectRows(function () { return $(this).data('eligible') === true; });
+            });
+            $('#clear-selection').on('click', function () {
+                checkboxes.prop('checked', false);
+                updateSelectionSummary();
+            });
+            $('.title-row').on('click', function (event) {
+                if (!checkboxes.length || $(event.target).closest('input, button, label, summary, details').length) {
+                    return;
+                }
+                const checkbox = $(this).find('.title-checkbox');
+                checkbox.prop('checked', !checkbox.prop('checked')).trigger('change');
+            });
+            updateSelectionSummary();
         });
 
     </script>
