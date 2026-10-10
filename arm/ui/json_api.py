@@ -15,7 +15,7 @@ from time import time, strftime, gmtime
 
 import arm.config.config as cfg
 from arm.models.config import Config
-from arm.models.job import Job, JobState, JOB_STATUS_FINISHED
+from arm.models.job import Job, JobState, JOB_STATUS_FINISHED, can_confirm_title
 from arm.models.notifications import Notifications
 from arm.models.track import Track
 from arm.ripper import open_library
@@ -73,6 +73,10 @@ def get_x_jobs(job_status):
         for key, value in j.get_d().items():
             if key != "config":
                 job_results[i][str(key)] = str(value)
+        # Keep UI action visibility in sync with the route's live eligibility
+        # check. Job.get_d() stringifies values, so expose this as a real JSON
+        # boolean after copying the model fields.
+        job_results[i]['can_confirm_title'] = can_confirm_title(j)
         i += 1
     if jobs:
         app.logger.debug("jobs  - we have " + str(len(job_results)) + " jobs")

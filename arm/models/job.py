@@ -101,6 +101,18 @@ JOB_STATUS_TRANSCODING = {
 }
 
 
+def can_confirm_title(job):
+    """Return whether the automatically identified title can be confirmed."""
+    return bool(
+        job
+        and job.status == JobState.MANUAL_WAIT_STARTED.value
+        and not job.manual_start
+        and not job.title_manual
+        and job.disctype not in ("music", "audiobook")
+        and (job.title or "").strip()
+    )
+
+
 class Job(db.Model):
     """
     Job Class hold most of the details for each job

@@ -5,6 +5,7 @@ Covers
 - jobdetailload [POST]
 - titlesearch [GET]
 - custometitle [GET]
+- confirmtitle [GET]
 - gettitle / customtitle [GET]
 - updatetitle [GET]
 - activerips [GET]
@@ -20,7 +21,7 @@ from werkzeug.routing import ValidationError
 
 import arm.ui.utils as ui_utils
 from arm.ui import app, db, constants, json_api
-from arm.models.job import Job, JobState
+from arm.models.job import Job, JobState, can_confirm_title
 from arm.models.notifications import Notifications
 import arm.config.config as cfg
 from arm.ripper import open_library
@@ -524,6 +525,29 @@ def customtitle():
         flash(f'Custom title changed. Title={job.title}, Year={job.year}.', "success")
         return redirect(url_for('home'))
     return render_template('customTitle.html', title='Change Title', form=form, job=job)
+
+
+@route_jobs.route('/confirmtitle')
+@login_required
+def confirmtitle():
+    """Accept the identified title without bypassing manual track selection."""
+    job_id = request.args.get('job_id')
+    job = Job.query.get(job_id)
+    if not can_confirm_title(job):
+        flash("This job is no longer waiting for title confirmation.", "danger")
+        return redirect(url_for('home'))
+
+    job.title_manual = job.title
+    job.year_manual = job.year
+    job.hasnicetitle = True
+    notification = Notifications(
+        f"Job: {job.job_id} title confirmed",
+        f"Title: {job.title} ({job.year}) was confirmed"
+    )
+    db.session.add(notification)
+    db.session.commit()
+    flash(f"Title confirmed: {job.title} ({job.year}).", "success")
+    return redirect(url_for('home'))
 
 
 @route_jobs.route('/gettitle')

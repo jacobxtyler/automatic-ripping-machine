@@ -86,10 +86,18 @@ function musicCheck(job, idsplit) {
     let x = "";
     if (!isAudioDisc(job)) {
         x = `<a href="titlesearch?job_id=${idsplit[1]}" class="btn btn-primary">Title Search</a>
-             <a href="customTitle?job_id=${idsplit[1]}" class="btn btn-primary">Custom Title</a>
-             <a href="changeparams?config_id=${idsplit[1]}" class="btn btn-primary">Edit Settings</a>`;
+             <a href="customTitle?job_id=${idsplit[1]}" class="btn btn-primary">Custom Title</a>`;
+        x += `<span id="jobId${job.job_id}_confirm_title">${confirmTitleButton(job, idsplit)}</span>`;
+        x += `<a href="changeparams?config_id=${idsplit[1]}" class="btn btn-primary">Edit Settings</a>`;
     }
     return x;
+}
+
+function confirmTitleButton(job, idsplit) {
+    if (job.can_confirm_title === true) {
+        return `<a href="confirmtitle?job_id=${idsplit[1]}" class="btn btn-success">Confirm Title</a>`;
+    }
+    return "";
 }
 
 function posterCheck(job) {

@@ -167,6 +167,7 @@ function updateJobItem(oldJob, job) {
     const cardHeader = $(`#jobId${job.job_id}_header`);
     const posterUrl = $(`#jobId${job.job_id}_poster_url`);
     const status = $(`#jobId${job.job_id}_status`);
+    const confirmTitle = $(`#jobId${job.job_id}_confirm_title`);
     // Update card header ( Title (Year) )
     if (cardHeader[0].innerText !== `${job.title} (${job.year})`) {
         cardHeader[0].innerText = `${job.title} (${job.year})`;
@@ -190,6 +191,9 @@ function updateJobItem(oldJob, job) {
     updateContents($(`#jobId${job.job_id}_MAINFEATURE`), job, "Main Feature", job.config.MAINFEATURE);
     updateContents($(`#jobId${job.job_id}_MINLENGTH`), job, "Min Length", job.config.MINLENGTH);
     updateContents($(`#jobId${job.job_id}_MAXLENGTH`), job, "Max Length", job.config.MAXLENGTH);
+    if (confirmTitle.length) {
+        confirmTitle.html(confirmTitleButton(job, job.job_id.split("_")));
+    }
 }
 
 /**
