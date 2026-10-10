@@ -141,8 +141,6 @@ def process_makemkv_logfile(job, job_results):
     Process the logfile and find current status and job progress percent\n
     :return: job_results dict
     """
-    job_progress_status = None
-    job_stage_index = None
     batch_log_path = os.path.join(cfg.arm_config['LOGPATH'], 'progress', str(job.job_id)) + '.log.batchinfo'
     lines = read_log_line(os.path.join(cfg.arm_config['LOGPATH'], 'progress', str(job.job_id)) + '.log')
     batch_index = read_log_line(batch_log_path)
@@ -154,25 +152,18 @@ def process_makemkv_logfile(job, job_results):
 
     if job_progress_status is not None:
         app.logger.debug(f"job_progress_status: {job_progress_status}")
-        job.progress = job_results['progress'] = \
-            f"{percentage(job_progress_status.group(1), job_progress_status.group(3)):.2f}"
-        job.progress_round = percentage(job_progress_status.group(1),
-                                        job_progress_status.group(3))
-        # The ETA calc needs the batch-info (BINF) file, but that file is only
-        # written further down, in the `job_stage_index` block. On the first
-        # poll for a job it does not exist yet, so `job_batch_info` is None and
-        # `job_batch_info.group(1)` raises
-        # "'NoneType' object has no attribute 'group'", which 500s the whole
-        # /json endpoint and leaves the Active Rips card blank. Because the
-        # crash happens *before* the code that creates the BINF file, it never
-        # bootstraps and stays broken for the entire rip. Guard it (and the
-        # divide-by-zero when progress is still 0) and report an Unknown ETA
-        # until the batch info is available.
-        if job_batch_info is not None and float(job.progress) > 0:
+        progress_total = int(job_progress_status.group(3))
+        if progress_total:
+            job.progress_round = percentage(job_progress_status.group(1), progress_total)
+        else:
+            job.progress_round = 0
+        job.progress = job_results['progress'] = f"{job.progress_round:.2f}"
+        job.eta = "Unknown"
+        if job_batch_info is not None and job.progress_round > 0:
             job_start_time = int(job_batch_info.group(1))
             current_time = int(time())
             elapsed_time = current_time - job_start_time
-            total_time = int((elapsed_time * 100) / float(job.progress))
+            total_time = int((elapsed_time * 100) / job.progress_round)
             time_remaining = total_time - elapsed_time
             app.logger.debug(f"ETA values for job {job.job_id}: Elapsed seconds: {elapsed_time}, "
                              f"Percent: {job.progress}, "
@@ -180,34 +171,41 @@ def process_makemkv_logfile(job, job_results):
                              f"Time remaining: {time_remaining}"
                              )
             job.eta = strftime("%Hh%Mm%Ss", gmtime(time_remaining))
-        else:
-            job.eta = "Unknown"
     else:
         app.logger.debug(f"Job [{job.job_id}] MakeMKV status not defined - setting progress to 0%")
         job.progress = job.progress_round = job_results['progress'] = 0
         job.eta = "Unknown"
 
-    if job_stage_index is not None:
-        try:
-            if job_batch_info.group(4) != job_stage_index.group(1):
-                app.logger.debug(f"Appending new batch position info for job {job.job_id}: "
-                                 f"BINF:{int(time())},"
-                                 f"{job_batch_info.group(2)},"
-                                 f"{job_batch_info.group(3)},"
-                                 f"{job_stage_index.group(1)}"
-                                 )
+    if job_stage_index is not None and job_batch_info is not None:
+        if job_batch_info.group(4) != job_stage_index.group(1):
+            app.logger.debug(f"Appending new batch position info for job {job.job_id}: "
+                             f"BINF:{int(time())},"
+                             f"{job_batch_info.group(2)},"
+                             f"{job_batch_info.group(3)},"
+                             f"{job_stage_index.group(1)}"
+                             )
+            try:
                 with open(batch_log_path, 'a') as f:
                     f.write(f"\nBINF:{int(time())},"
                             f"{job_batch_info.group(2)},"
                             f"{job_batch_info.group(3)},"
                             f"{job_stage_index.group(1)}"
                             )
-            app.logger.debug(f"job_stage_index: {job_stage_index}")
-            current_index = f"Track {job_batch_info.group(2)}/{job_batch_info.group(3)}<br>{job_stage_index.group(3)}"
-            job.stage = job_results['stage'] = current_index
-            db.session.commit()
-        except Exception as error:
-            job.stage = f"Unknown -  {error}"
+            except OSError:
+                app.logger.debug(f"Unable to update batch progress for job {job.job_id}", exc_info=True)
+        app.logger.debug(f"job_stage_index: {job_stage_index}")
+        job.stage = f"Track {job_batch_info.group(2)}/{job_batch_info.group(3)}<br>{job_stage_index.group(3)}"
+    elif job_stage_index is not None:
+        # A progress log can arrive before its optional batch metadata. Keep
+        # the MakeMKV phase visible without assuming a track position.
+        job.stage = job_stage_index.group(3)
+    else:
+        job.stage = job.stage or "Unknown"
+
+    job_results['stage'] = job.stage
+    job_results['eta'] = job.eta
+    job_results['progress_round'] = job.progress_round
+    db.session.commit()
 
     return job_results
 

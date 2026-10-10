@@ -703,21 +703,11 @@ def makemkv_mkv(job, rawpath):
 
             raise utils.RipperException("Manual mode: Timed out waiting for user input")
 
-    # if no maximum length, process the whole disc in one command
+    # With no maximum length, process eligible titles one at a time. This
+    # keeps MakeMKV's --minlength selection while providing per-title progress
+    # and ETA data to the web UI.
     elif int(job.config.MAXLENGTH) > 99998:
-        cmd = [
-            "mkv",
-        ]
-        cmd += shlex.split(job.config.MKV_ARGS)
-        cmd += [
-            f"--progress={progress_log(job)}",
-            f"dev:{job.devpath}",
-            "all",
-            rawpath,
-            f"--minlength={job.config.MINLENGTH}",
-        ]
-        logging.info("Process all tracks from disc.")
-        collections.deque(run(cmd, OutputType.MSG), maxlen=0)
+        process_single_tracks(job, rawpath, 'auto', unlimited=True)
     else:
         process_single_tracks(job, rawpath, 'auto')
 
@@ -801,7 +791,7 @@ def rip_mainfeature(job, track, rawpath):
     collections.deque(run(cmd, OutputType.MSG), maxlen=0)
 
 
-def process_single_tracks(job, rawpath, mode: str):
+def process_single_tracks(job, rawpath, mode: str, unlimited=False):
     """
     Process single tracks by MakeMKV one at a time
 
@@ -809,6 +799,8 @@ def process_single_tracks(job, rawpath, mode: str):
         job: arm.models.job.Job
         rawpath:
         mode: drive mode (auto or manual)
+        unlimited: when true, automatic selection has no maximum title length,
+            matching MakeMKV's ``--minlength`` behavior.
     """
     # process one track at a time based on track length
     if mode == 'auto':
@@ -820,7 +812,7 @@ def process_single_tracks(job, rawpath, mode: str):
                              f"is less than minimum length ({job.config.MINLENGTH}).  Skipping")
                 track.process = False
 
-            elif track.length > int(job.config.MAXLENGTH):
+            elif not unlimited and track.length > int(job.config.MAXLENGTH):
                 # too long
                 logging.info(f"Track #{track.track_number} of {job.no_of_titles}. "
                              f"Length ({track.length}) is greater than maximum length ({job.config.MAXLENGTH}).  "
@@ -832,7 +824,10 @@ def process_single_tracks(job, rawpath, mode: str):
 
     # Rip the track if the user has set it to rip, or in auto mode and the time is good
 
-    tracks_to_process = [track for track in job.tracks if track.process]
+    tracks_to_process = sorted(
+        (track for track in job.tracks if track.process),
+        key=lambda track: int(track.track_number),
+    )
     process_index = 1
     for track in tracks_to_process:
         logging.info(f"Processing track #{process_index} of {len(tracks_to_process)}. "
