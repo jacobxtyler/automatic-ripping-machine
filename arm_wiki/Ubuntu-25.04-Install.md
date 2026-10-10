@@ -117,6 +117,23 @@ sudo systemctl enable armui
 sudo systemctl start armui
 ```
 
+### Configure WebUI log rotation
+
+The ARMui service writes its output to `/home/arm/logs/WebUI.log`. To keep this
+file from growing indefinitely, install the included optional logrotate rule:
+
+```bash
+sudo cp /opt/arm/setup/armui.logrotate /etc/logrotate.d/armui
+```
+
+The rule rotates the log after it reaches 10 MiB, keeps five compressed
+archives, and does not require restarting the ARMui service. You can verify the
+installed rule with:
+
+```bash
+sudo logrotate --debug /etc/logrotate.d/armui
+```
+
 ## Post install
 You should now have the ARM UI running at http://localhost:8080
 
