@@ -21,10 +21,19 @@ class Track(db.Model):
     process = db.Column(db.Boolean)
     chapters = db.Column(db.Integer, default=0)
     filesize = db.Column(db.BigInteger, default=0)
+    playlist_id = db.Column(db.String(64))
+    segment_count = db.Column(db.Integer)
+    segment_map = db.Column(db.Text)
+    video_resolution = db.Column(db.String(32))
+    video_codec = db.Column(db.String(64))
+    audio_languages = db.Column(db.String(512))
+    subtitle_languages = db.Column(db.String(512))
 
     def __init__(self, job_id, track_number, length, aspect_ratio,
                  fps, main_feature, source, basename, filename,
-                 chapters=0, filesize=0):
+                 chapters=0, filesize=0, playlist_id=None, segment_count=None,
+                 segment_map=None, video_resolution=None, video_codec=None,
+                 audio_languages=None, subtitle_languages=None):
         """Return a track object"""
         self.job_id = job_id
         self.track_number = track_number
@@ -39,6 +48,13 @@ class Track(db.Model):
         self.process = False
         self.chapters = chapters
         self.filesize = filesize
+        self.playlist_id = playlist_id
+        self.segment_count = segment_count
+        self.segment_map = segment_map
+        self.video_resolution = video_resolution
+        self.video_codec = video_codec
+        self.audio_languages = audio_languages
+        self.subtitle_languages = subtitle_languages
 
     def __repr__(self):
         return f'<Track {self.track_number}>'

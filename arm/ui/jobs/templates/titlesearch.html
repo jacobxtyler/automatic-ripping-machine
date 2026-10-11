@@ -3,34 +3,111 @@
 
 {% block nav %}{{ super() }}{% endblock %}
 
-{% block content %}  
+{% block content %}
 <div class="container d-flex justify-content-center">
-    <div class="row" style="flex-wrap: nowrap">
-        <form action="" method="get" novalidate>
-			{{ form.hidden_tag() }}
-			<div class="input-group mb-3">
-				<div class="input-group-prepend">
-					<span class="input-group-text" id="searchtitle">Title</span>
-				</div>
-				<input type="text" class="form-control" aria-label="searchtitle" name="title" value="{{job.title}}" aria-describedby="searchtitle">
-			    <div class="invalid-tooltip">
-					Search can't be blank
-				</div>
-				<div class="input-group-prepend">
-					<span class="input-group-text" id="basic-addon1">Year</span>
-				</div>
-				<input type="text" class="form-control" name="year" value="{{job.year}}" aria-label="year" aria-describedby="basic-addon1">
-			</div>
-			<input class="form-control" name="save" value="save" hidden>
-			<input class="form-control" name="job_id" value="{{ job.job_id }}" hidden>
-			<button class="btn btn-info btn-lg btn-block" type="submit">Search</button>
-		</form>
-	</div>
-</div>
-			{% if form.errors %}
-				{% for k in form.errors %}
-					<script>$("[name='{{k}}']").addClass("is-invalid");</script>
-				{% endfor %}
-			{% endif %}
+    <div class="row" style="flex-wrap: nowrap; min-width: min(100%, 720px);">
+        <form action="" method="get" novalidate class="w-100">
+            {{ form.hidden_tag() }}
+            <input class="form-control" name="job_id" value="{{ job.job_id }}" hidden>
 
+            {% if audio_manual_job %}
+                <div class="input-group mb-3">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text" id="mediaTypeLabel">Disc Type</span>
+                    </div>
+                    <select class="form-control" id="media_type" name="media_type" aria-describedby="mediaTypeLabel">
+                        <option value="music" {% if form.media_type.data == "music" %}selected{% endif %}>Music</option>
+                        <option value="audiobook" {% if form.media_type.data == "audiobook" %}selected{% endif %}>Audiobook</option>
+                    </select>
+                </div>
+            {% endif %}
+
+            <div class="input-group mb-3">
+                <div class="input-group-prepend">
+                    <span class="input-group-text" id="searchtitle">Title</span>
+                </div>
+                <input type="text" class="form-control" aria-label="searchtitle" name="title"
+                       value="{{ form.title.data or '' }}" aria-describedby="searchtitle">
+                <div class="input-group-prepend">
+                    <span class="input-group-text" id="basic-addon1">Year</span>
+                </div>
+                <input type="text" class="form-control" name="year" value="{{ form.year.data or '' }}" aria-label="year"
+                       aria-describedby="basic-addon1">
+            </div>
+
+            <div id="audiobook-search-fields" {% if not audio_manual_job or form.media_type.data != "audiobook" %}style="display:none;"{% endif %}>
+                <div class="input-group mb-3">
+                    <div class="input-group-prepend">
+                        <span class="input-group-text" id="searchauthor">Author</span>
+                    </div>
+                    <input type="text" class="form-control" aria-label="searchauthor" name="author"
+                           value="{{ form.author.data or '' }}" aria-describedby="searchauthor">
+                </div>
+                <div class="form-row">
+                    <div class="form-group col-md-6">
+                        <label for="audiobook_disc_number">Disc Number</label>
+                        <input class="form-control" id="audiobook_disc_number" name="audiobook_disc_number" type="number"
+                               min="1" value="{{ form.audiobook_disc_number.data or '' }}">
+                    </div>
+                    <div class="form-group col-md-6">
+                        <label for="audiobook_total_discs">Total Discs</label>
+                        <input class="form-control" id="audiobook_total_discs" name="audiobook_total_discs" type="number"
+                               min="1" value="{{ form.audiobook_total_discs.data or '' }}">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group col-md-6">
+                        <label for="open_library_work_key">Open Library Work Key</label>
+                        <input class="form-control" id="open_library_work_key" name="open_library_work_key"
+                               value="{{ form.open_library_work_key.data or '' }}">
+                    </div>
+                    <div class="form-group col-md-6">
+                        <label for="open_library_cover_id">Cover ID</label>
+                        <input class="form-control" id="open_library_cover_id" name="open_library_cover_id"
+                               value="{{ form.open_library_cover_id.data or '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <button class="btn btn-info btn-lg btn-block mb-2" type="submit" name="save" value="save">
+                {% if audio_manual_job and form.media_type.data == "music" %}Start Music Rip{% else %}Search{% endif %}
+            </button>
+            {% if audio_manual_job %}
+                <button class="btn btn-secondary btn-lg btn-block" type="submit" id="manual-save-button"
+                        name="manual_save" value="manual_save"
+                        {% if form.media_type.data != "audiobook" %}style="display:none;"{% endif %}>
+                    Save Audiobook Manually
+                </button>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<script type="application/javascript">
+    $(function () {
+        const mediaType = $("#media_type");
+        const audiobookFields = $("#audiobook-search-fields");
+        const searchButton = $("button[name='save']");
+        const manualSaveButton = $("#manual-save-button");
+
+        function updateAudioSearchMode() {
+            if (!mediaType.length) {
+                return;
+            }
+
+            if (mediaType.val() === "audiobook") {
+                audiobookFields.show();
+                manualSaveButton.show();
+                searchButton.text("Search");
+            } else {
+                audiobookFields.hide();
+                manualSaveButton.hide();
+                searchButton.text("Start Music Rip");
+            }
+        }
+
+        mediaType.on("change", updateAudioSearchMode);
+        updateAudioSearchMode();
+    });
+</script>
 {% endblock %}

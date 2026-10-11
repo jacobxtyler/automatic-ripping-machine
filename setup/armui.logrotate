@@ -1,0 +1,10 @@
+# To enable this rule, copy it to /etc/logrotate.d/armui.
+/home/arm/logs/WebUI.log {
+    size 10M
+    rotate 5
+    compress
+    missingok
+    notifempty
+    copytruncate
+    su arm arm
+}

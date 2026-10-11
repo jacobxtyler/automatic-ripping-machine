@@ -29,7 +29,7 @@ class TestArmInfo(unittest.TestCase):
             commit: return Unknown
         """
         arm_subprocess_mock = MagicMock()
-        arm_subprocess_mock.return_value = b" master\ncommit "
+        arm_subprocess_mock.return_value = " master\ncommit "
         with unittest.mock.patch('arm.ripper.ProcessHandler.arm_subprocess',
                                  arm_subprocess_mock):
             self.arm_info.get_git_commit()
@@ -45,7 +45,7 @@ class TestArmInfo(unittest.TestCase):
             commit: abc12de
         """
         arm_subprocess_mock = MagicMock()
-        arm_subprocess_mock.return_value = b"* master\ncommit abc12de"
+        arm_subprocess_mock.return_value = "* master\ncommit abc12de"
         with unittest.mock.patch('arm.ripper.ProcessHandler.arm_subprocess',
                                  arm_subprocess_mock):
             self.arm_info.get_git_commit()
@@ -61,7 +61,7 @@ class TestArmInfo(unittest.TestCase):
             commit: a
         """
         arm_subprocess_mock = MagicMock()
-        arm_subprocess_mock.return_value = b"* m\ncommit a"
+        arm_subprocess_mock.return_value = "* m\ncommit a"
         with unittest.mock.patch('arm.ripper.ProcessHandler.arm_subprocess',
                                  arm_subprocess_mock):
             self.arm_info.get_git_commit()
@@ -81,7 +81,7 @@ class TestArmInfo(unittest.TestCase):
         data_check_branch = "thequickbrownfoxjumpedoverthelazydog"
         data_check_commit = "a1b2c3d4e5f6g7h8i9j10"
         arm_subprocess_mock = MagicMock()
-        arm_subprocess_mock.return_value = b"* thequickbrownfoxjumpedoverthelazydog\ncommit a1b2c3d4e5f6g7h8i9j10"
+        arm_subprocess_mock.return_value = "* thequickbrownfoxjumpedoverthelazydog\ncommit a1b2c3d4e5f6g7h8i9j10"
         with unittest.mock.patch('arm.ripper.ProcessHandler.arm_subprocess',
                                  arm_subprocess_mock):
             self.arm_info.get_git_commit()

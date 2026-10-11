@@ -4,11 +4,19 @@ set -eo pipefail
 
 DEVNAME=$1
 USER="arm"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALLPATH="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PYTHON_BIN="${INSTALLPATH}/venv/bin/python3"
+
+if [ ! -x "${PYTHON_BIN}" ]; then
+	PYTHON_BIN="/usr/bin/python3"
+fi
 
 #######################################################################################
 # Log Discovered Type and Start Rip
 # ID_CDROM_MEDIA_BD = Blu-ray
-# ID_CDROM_MEDIA_CD = CD
+# ID_CDROM_MEDIA_CD = pressed CD
+# ID_CDROM_MEDIA_CD_R / ID_CDROM_MEDIA_CD_RW = recordable audio CD
 # ID_CDROM_MEDIA_DVD = DVD
 #######################################################################################
 
@@ -18,7 +26,7 @@ if [ "$ID_CDROM_MEDIA_DVD" == "1" ]; then
 elif [ "$ID_CDROM_MEDIA_BD" == "1" ]; then
 	echo "[ARM] Starting ARM for Blu-ray on ${DEVNAME}" | logger -t ARM -s
 
-elif [ "$ID_CDROM_MEDIA_CD" == "1" ]; then
+elif [[ "$ID_CDROM_MEDIA_CD" == "1" || "$ID_CDROM_MEDIA_CD_R" == "1" || "$ID_CDROM_MEDIA_CD_RW" == "1" ]]; then
 	echo "[ARM] Starting ARM for CD on ${DEVNAME}" | logger -t ARM -s
 
 elif [ "$ID_FS_TYPE" != "" ]; then
@@ -29,7 +37,7 @@ else
 
 fi
 
-/bin/su -l -c "echo /usr/bin/python3 /opt/arm/arm/ripper/main.py -d ${DEVNAME} | at now" -s /bin/bash ${USER}
+/bin/su -l -c "echo ${PYTHON_BIN} ${INSTALLPATH}/arm/ripper/main.py -d ${DEVNAME} | at now" -s /bin/bash ${USER}
 
 #######################################################################################
 # Check to see if the admin page is running, if not, start it
@@ -37,5 +45,5 @@ fi
 
 if ! pgrep -f "runui.py" > /dev/null; then
 	echo "[ARM] ARM Webgui not running; starting it " | logger -t ARM -s
-	/bin/su -l -c "/usr/bin/python3 /opt/arm/arm/runui.py  " -s /bin/bash ${USER}
+	/bin/su -l -c "${PYTHON_BIN} ${INSTALLPATH}/arm/runui.py" -s /bin/bash ${USER}
 fi

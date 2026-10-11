@@ -52,6 +52,8 @@ def database_updater(args, job, wait_time=90):
     for i in range(wait_time):  # give up after the users wait period in seconds
         try:
             db.session.commit()
+            app.logger.debug("successfully written to the database")
+            return True
         except Exception as error:
             if "locked" in str(error):
                 sleep(1)
@@ -61,8 +63,8 @@ def database_updater(args, job, wait_time=90):
                 db.session.rollback()
                 raise RuntimeError(str(error)) from error
 
-    app.logger.debug("successfully written to the database")
-    return True
+    app.logger.error(f"database is locked after {wait_time}s; update was not committed")
+    return False
 
 
 def check_db_version(install_path, db_file):
@@ -81,6 +83,9 @@ def check_db_version(install_path, db_file):
     config.set_main_option("script_location", mig_dir)
     script = ScriptDirectory.from_config(config)
 
+    head_revision = script.get_current_head()
+    app.logger.debug("Alembic Head is: " + head_revision)
+
     # create db file if it doesn't exist
     if not os.path.isfile(db_file):
         app.logger.info("No database found.  Initializing arm.db...")
@@ -90,38 +95,44 @@ def check_db_version(install_path, db_file):
 
         if not os.path.isfile(db_file):
             app.logger.debug("Can't create database file.  This could be a permissions issue.  Exiting...")
-        else:
-            # Only run the below if the db exists
-            # Check to see if db is at current revision
-            head_revision = script.get_current_head()
-            app.logger.debug("Alembic Head is: " + head_revision)
+            return
 
-            conn = sqlite3.connect(db_file)
-            c = conn.cursor()
-
+    conn = sqlite3.connect(db_file)
+    try:
+        c = conn.cursor()
         c.execute('SELECT version_num FROM alembic_version')
         db_version = c.fetchone()[0]
         app.logger.debug(f"Database version is: {db_version}")
-        if head_revision == db_version:
-            app.logger.info("Database is up to date")
-        else:
-            app.logger.info(
-                f"Database out of date. Head is {head_revision} and database is {db_version}.  Upgrading database...")
-            with app.app_context():
-                unique_stamp = round(time() * 100)
-                app.logger.info(f"Backing up database '{db_file}' to '{db_file}{unique_stamp}'.")
-                shutil.copy(db_file, db_file + "_" + str(unique_stamp))
-                flask_migrate.upgrade(mig_dir)
-            app.logger.info("Upgrade complete.  Validating version level...")
+    finally:
+        conn.close()
 
-            c.execute("SELECT version_num FROM alembic_version")
-            db_version = c.fetchone()[0]
-            app.logger.debug(f"Database version is: {db_version}")
-            if head_revision == db_version:
-                app.logger.info("Database is now up to date")
-            else:
-                app.logger.error(f"Database is still out of date. "
-                                 f"Head is {head_revision} and database is {db_version}.  Exiting arm.")
+    if head_revision == db_version:
+        app.logger.info("Database is up to date")
+        return
+
+    app.logger.info(
+        f"Database out of date. Head is {head_revision} and database is {db_version}.  Upgrading database...")
+    with app.app_context():
+        unique_stamp = round(time() * 100)
+        app.logger.info(f"Backing up database '{db_file}' to '{db_file}{unique_stamp}'.")
+        shutil.copy(db_file, db_file + "_" + str(unique_stamp))
+        flask_migrate.upgrade(mig_dir)
+    app.logger.info("Upgrade complete.  Validating version level...")
+
+    conn = sqlite3.connect(db_file)
+    try:
+        c = conn.cursor()
+        c.execute("SELECT version_num FROM alembic_version")
+        db_version = c.fetchone()[0]
+        app.logger.debug(f"Database version is: {db_version}")
+    finally:
+        conn.close()
+
+    if head_revision == db_version:
+        app.logger.info("Database is now up to date")
+    else:
+        app.logger.error(f"Database is still out of date. "
+                         f"Head is {head_revision} and database is {db_version}.  Exiting arm.")
 
 
 def arm_alembic_get():
@@ -866,11 +877,12 @@ def get_git_revision_hash() -> str:
     git_hash: str = 'unknown'
     try:
         git_hash = subprocess.check_output(['git', 'rev-parse', 'HEAD'],
-                                           cwd=cfg.arm_config['INSTALLPATH']).decode('ascii').strip()
+                                           cwd=cfg.arm_config['INSTALLPATH'],
+                                           timeout=10).decode('ascii').strip()
         # Trunkate to seven characters (aligns with the github commit values reported)
         git_hash = git_hash[:7]
         app.logger.debug(f"GIT revision: {git_hash}")
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         app.logger.debug(f"GIT revision error: {e}")
 
     return git_hash
@@ -881,8 +893,8 @@ def get_git_revision_short_hash() -> str:
     git_hash: str = 'unknown'
     try:
         subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'],
-                                cwd=cfg.arm_config['INSTALLPATH']).decode('ascii').strip()
-    except subprocess.CalledProcessError as e:
+                                cwd=cfg.arm_config['INSTALLPATH'], timeout=10).decode('ascii').strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         app.logger.debug(f"GIT revision error: {e}")
 
     return git_hash
@@ -935,6 +947,7 @@ def git_check_version():
     """
 
     install_path = cfg.arm_config['INSTALLPATH']
+    local_version = "Unknown"
 
     # Read the local version from the VERSION file
     version_file_path = os.path.join(install_path, 'VERSION')
@@ -949,9 +962,9 @@ def git_check_version():
     # Read the remote version from Git (without modifying local files)
     try:
         remote_version = subprocess.check_output(
-            'git show origin/HEAD:VERSION', shell=True, cwd=install_path
+            'git show origin/HEAD:VERSION', shell=True, cwd=install_path, timeout=10
         ).decode('ascii').strip()
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
         app.logger.debug(f"Error - ARM Remote Version error: {e}")
         remote_version = "Unknown"
 

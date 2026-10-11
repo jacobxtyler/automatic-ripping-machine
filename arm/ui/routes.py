@@ -28,7 +28,6 @@ from arm.models.user import User
 import arm.config.config as cfg
 from arm.ui.forms import DBUpdate
 from arm.ui.settings.ServerUtil import ServerUtil
-from arm.ui.settings.settings import check_hw_transcode_support
 
 # This attaches the armui_cfg globally to let the users use any bootswatch skin from cdn
 armui_cfg = ui_utils.arm_db_cfg()
@@ -47,8 +46,6 @@ def home():
     """
     # Check the database is current
     db_update = ui_utils.arm_db_check()
-    # Push out HW transcode status for the homepage
-    stats = {'hw_support': check_hw_transcode_support()}
     if not db_update["db_current"] or not db_update["db_exists"]:
         dbform = DBUpdate(request.form)
         app.logger.debug(f"Error with ARM DB: [{db_update['db_current']}]-[{db_update['db_exists']}]")
@@ -86,7 +83,7 @@ def home():
                            jobs=jobs,
                            children=cfg.arm_config['ARM_CHILDREN'],
                            server=server, serverutil=serverutil,
-                           arm_path=arm_path, media_path=media_path, stats=stats)
+                           arm_path=arm_path, media_path=media_path)
 
 
 @app.route('/error')

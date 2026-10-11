@@ -31,7 +31,7 @@ def setup_job_log(job):
     """
     # This isn't catching all of them
     if job.label == "" or job.label is None:
-        if job.disctype == "music":
+        if job.disctype == "music" and not job.manual_mode:
             valid_label = job.identify_audio_cd()
         else:
             valid_label = "no_label"

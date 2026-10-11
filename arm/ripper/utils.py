@@ -5,9 +5,11 @@ import os
 import logging
 import subprocess
 import shutil
+import shlex
 import time
 import random
 import re
+import tempfile
 from logging import Logger
 from pathlib import Path, PurePath
 from math import ceil
@@ -30,6 +32,7 @@ from arm.models.system_drives import SystemDrives
 from arm.ripper import apprise_bulk
 
 NOTIFY_TITLE = "ARM notification"
+AUDIOBOOK_AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
 
 
 class RipperException(Exception):
@@ -111,8 +114,18 @@ def notify_entry(job):
         notify(job, NOTIFY_TITLE,
                f"Found disc: {job.title}. Disc type is {job.disctype}. Main Feature is {job.config.MAINFEATURE}."
                f"Edit entry here: {display_address}/jobdetail?job_id={job.job_id}")
+    elif job.disctype == "music" and job.manual_mode:
+        if cfg.arm_config["UI_BASE_URL"] == "":
+            display_address = (f"http://{check_ip()}:{job.config.WEBSERVER_PORT}")
+        else:
+            display_address = str(cfg.arm_config["UI_BASE_URL"])
+        notify(job, NOTIFY_TITLE,
+               f"Found audio CD: {job.label}. Choose Music or Audiobook here: "
+               f"{display_address}/jobdetail?job_id={job.job_id}")
     elif job.disctype == "music":
         notify(job, NOTIFY_TITLE, f"Found music CD: {job.label}. Ripping all tracks.")
+    elif job.disctype == "audiobook":
+        notify(job, NOTIFY_TITLE, f"Found audiobook CD: {job.title}. Ripping all tracks.")
     elif job.disctype == "data":
         notify(job, NOTIFY_TITLE, "Found data disc.  Copying data.")
     else:
@@ -441,6 +454,56 @@ def find_largest_file(files, mkv_out_path):
     return largest_file_name
 
 
+def run_abcde(job, logfile, cwd=None, abcde_config_file=None):
+    """Run abcde for an audio disc using ARM's configured abcde.conf."""
+    abcfile = abcde_config_file or cfg.arm_config["ABCDE_CONFIG_FILE"]
+    log_path = os.path.join(job.config.LOGPATH, logfile)
+    if os.path.isfile(abcfile):
+        cmd = f"abcde -d {shlex.quote(job.devpath)} -c {shlex.quote(abcfile)} >> {shlex.quote(log_path)} 2>&1"
+    else:
+        cmd = f"abcde -d {shlex.quote(job.devpath)} >> {shlex.quote(log_path)} 2>&1"
+
+    logging.debug(f"Sending command: {cmd}")
+    args = {"status": JobState.AUDIO_RIPPING.value}
+    database_updater(args, job)
+
+    try:
+        # TODO check output and confirm all tracks ripped; find "Finished\.$"
+        subprocess.check_output(cmd, shell=True, cwd=cwd).decode("utf-8")
+        logging.info("abcde call successful")
+        args = {"status": JobState.IDLE.value}
+        database_updater(args, job)
+        return True
+    except subprocess.CalledProcessError as ab_error:
+        err = f"Call to abcde failed with code: {ab_error.returncode} ({ab_error.output})"
+        args = {"status": JobState.FAILURE.value, "errors": err}
+        database_updater(args, job)
+        logging.error(err)
+    return False
+
+
+def create_audiobook_abcde_config(source_config, destination_config, output_dir):
+    """
+    Create a job-local abcde config for audiobook ripping.
+
+    Existing abcde settings remain the source of truth for encoder and format
+    choices. The only forced override is OUTPUTDIR so ARM can collect the files
+    and move them into the audiobook layout.
+    """
+    try:
+        with open(source_config, "r") as source_file:
+            config_text = source_file.read()
+    except OSError:
+        config_text = ""
+
+    make_dir(output_dir)
+    config_text = config_text.rstrip()
+    override = f"OUTPUTDIR={shlex.quote(output_dir)}"
+    with open(destination_config, "w") as destination_file:
+        destination_file.write(f"{config_text}\n\n# ARM audiobook job override\n{override}\n")
+    return destination_config
+
+
 def rip_music(job, logfile):
     """
     Rip music CD using abcde config\n
@@ -449,32 +512,110 @@ def rip_music(job, logfile):
     :return: Bool on success or fail
     """
 
-    abcfile = cfg.arm_config["ABCDE_CONFIG_FILE"]
     if job.disctype == "music":
         logging.info("Disc identified as music")
-        # If user has set a cfg.arm_config file with ARM use it
-        if os.path.isfile(abcfile):
-            cmd = f'abcde -d "{job.devpath}" -c {abcfile} >> "{os.path.join(job.config.LOGPATH, logfile)}" 2>&1'
-        else:
-            cmd = f'abcde -d "{job.devpath}" >> "{os.path.join(job.config.LOGPATH, logfile)}" 2>&1'
-
-        logging.debug(f"Sending command: {cmd}")
-        args = {"status": JobState.AUDIO_RIPPING.value}
-        database_updater(args, job)
-
-        try:
-            # TODO check output and confirm all tracks ripped; find "Finished\.$"
-            subprocess.check_output(cmd, shell=True).decode("utf-8")
-            logging.info("abcde call successful")
-            args = {"status": JobState.IDLE.value}
-            database_updater(args, job)
-            return True
-        except subprocess.CalledProcessError as ab_error:
-            err = f"Call to abcde failed with code: {ab_error.returncode} ({ab_error.output})"
-            args = {"status": JobState.FAILURE.value, "errors": err}
-            database_updater(args, job)
-            logging.error(err)
+        return run_abcde(job, logfile)
     return False
+
+
+def sanitize_audiobook_path_part(value, fallback="Unknown"):
+    """Return a filesystem-safe path segment for audiobook output."""
+    if value is None:
+        value = ""
+    cleaned = clean_for_filename(str(value)).strip(" .-")
+    return cleaned or fallback
+
+
+def format_audiobook_disc_dir(disc_number):
+    """Return the audiobook disc directory name, e.g. Disc 01."""
+    return f"Disc {int(disc_number):02d}"
+
+
+def audiobook_destination_dir(job):
+    """Build the final audiobook directory for a job."""
+    author = sanitize_audiobook_path_part(job.audiobook_author, "Unknown Author")
+    title = sanitize_audiobook_path_part(job.title_manual or job.title, "Unknown Title")
+    disc_dir = format_audiobook_disc_dir(job.audiobook_disc_number)
+    return os.path.join(job.config.AUDIOBOOK_PATH, author, title, disc_dir)
+
+
+def audiobook_track_filename(index, source_path, track_title=None):
+    """Build the final audiobook track filename."""
+    track_number = f"{int(index):02d}"
+    title = sanitize_audiobook_path_part(track_title, f"Track {track_number}")
+    extension = os.path.splitext(source_path)[1]
+    return f"{track_number} - {title}{extension}"
+
+
+def find_audiobook_audio_files(path):
+    """Return audio files below path in stable order."""
+    audio_files = []
+    for root, _dirs, files in os.walk(path):
+        for file_name in files:
+            if os.path.splitext(file_name)[1].lower() in AUDIOBOOK_AUDIO_EXTENSIONS:
+                audio_files.append(os.path.join(root, file_name))
+    return sorted(audio_files, key=_natural_sort_key)
+
+
+def _natural_sort_key(value):
+    """Sort strings containing numbers in human track order."""
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", value)]
+
+
+def _track_number_as_int(track):
+    """Return a numeric track number for sorting, defaulting to zero."""
+    try:
+        return int(track.track_number)
+    except (TypeError, ValueError):
+        return 0
+
+
+def move_audiobook_files(job, source_dir):
+    """Move ripped abcde files into the configured audiobook folder layout."""
+    destination_dir = audiobook_destination_dir(job)
+    make_dir(destination_dir)
+    audio_files = find_audiobook_audio_files(source_dir)
+    if not audio_files:
+        raise RipperException(f"No audiobook audio files found in {source_dir}")
+
+    tracks = sorted(job.tracks.all(), key=_track_number_as_int)
+    for index, source_path in enumerate(audio_files, start=1):
+        track_title = tracks[index - 1].filename if index <= len(tracks) else None
+        destination = os.path.join(destination_dir, audiobook_track_filename(index, source_path, track_title))
+        logging.info(f"Moving audiobook track {source_path} to {destination}")
+        shutil.move(source_path, destination)
+
+    database_updater({"path": destination_dir}, job)
+    return destination_dir
+
+
+def rip_audiobook(job, logfile):
+    """
+    Rip an audiobook CD using abcde, then move tracks into audiobook layout.
+
+    abcde remains responsible for encoding settings. ARM only creates an isolated
+    working directory and organizes the resulting audio files after abcde exits.
+    """
+    if job.disctype != "audiobook":
+        return False
+    if not job.audiobook_author or not (job.title_manual or job.title) or not job.audiobook_disc_number:
+        raise RipperException("Audiobook author, title, and disc number are required before ripping.")
+
+    logging.info("Disc identified as audiobook")
+    base_tmp_path = getattr(job.config, "RAW_PATH", None) or tempfile.gettempdir()
+    work_dir = os.path.join(base_tmp_path, f"audiobook_{job.job_id}_{job.stage}")
+    make_dir(work_dir)
+    abcde_config_file = create_audiobook_abcde_config(
+        cfg.arm_config["ABCDE_CONFIG_FILE"],
+        os.path.join(work_dir, "abcde-audiobook.conf"),
+        work_dir
+    )
+
+    if not run_abcde(job, logfile, cwd=work_dir, abcde_config_file=abcde_config_file):
+        return False
+
+    move_audiobook_files(job, work_dir)
+    return True
 
 
 def rip_data(job):
@@ -578,7 +719,9 @@ def try_add_default_user():
 
 
 def put_track(job, t_no, seconds, aspect, fps, mainfeature, source, filename="",
-              chapters=0, filesize=0):
+              chapters=0, filesize=0, playlist_id=None, segment_count=None,
+              segment_map=None, video_resolution=None, video_codec=None,
+              audio_languages=None, subtitle_languages=None):
     """
     Put data into a track instance.\n
     Having this here saves importing the models file everywhere\n
@@ -611,7 +754,14 @@ def put_track(job, t_no, seconds, aspect, fps, mainfeature, source, filename="",
         basename=job.title,
         filename=filename,
         chapters=chapters,
-        filesize=filesize
+        filesize=filesize,
+        playlist_id=playlist_id,
+        segment_count=segment_count,
+        segment_map=segment_map,
+        video_resolution=video_resolution,
+        video_codec=video_codec,
+        audio_languages=audio_languages,
+        subtitle_languages=subtitle_languages
     )
     job_track.ripped = (seconds > int(job.config.MINLENGTH))
     database_adder(job_track)
@@ -626,6 +776,7 @@ def arm_setup(arm_log: Logger) -> None:
         cfg.arm_config['RAW_PATH'],
         cfg.arm_config['TRANSCODE_PATH'],
         cfg.arm_config['COMPLETED_PATH'],
+        cfg.arm_config['AUDIOBOOK_PATH'],
         cfg.arm_config['LOGPATH'],
         os.path.join(cfg.arm_config['LOGPATH'], "progress"),
     )
@@ -664,6 +815,8 @@ def database_updater(args, job, wait_time=90):
     for i in range(wait_time):  # give up after the users wait period in seconds
         try:
             db.session.commit()
+            logging.debug("successfully written to the database")
+            return True
         except Exception as error:
             if "locked" in str(error):
                 time.sleep(1)
@@ -671,8 +824,8 @@ def database_updater(args, job, wait_time=90):
             else:
                 logging.debug(f"Error: {error}")
                 raise RuntimeError(str(error)) from error
-    logging.debug("successfully written to the database")
-    return True
+    logging.error(f"database is locked after {wait_time}s; update was not committed")
+    return False
 
 
 def database_adder(obj_class):
@@ -687,7 +840,8 @@ def database_adder(obj_class):
             logging.debug(f"Trying to add {type(obj_class).__name__}")
             db.session.add(obj_class)
             db.session.commit()
-            break
+            logging.debug(f"successfully written {type(obj_class).__name__} to the database")
+            return True
         except Exception as error:
             if "locked" in str(error):
                 time.sleep(1)
@@ -695,8 +849,8 @@ def database_adder(obj_class):
             else:
                 logging.error(f"Error: {error}")
                 raise RuntimeError(str(error)) from error
-    logging.debug(f"successfully written {type(obj_class).__name__} to the database")
-    return True
+    logging.error(f"database is locked after 90s; {type(obj_class).__name__} was not added")
+    return False
 
 
 def clean_old_jobs():
@@ -775,8 +929,8 @@ def duplicate_run_check(dev_path):
         logging.info(f"Device {dev_path}: Job ({job.job_id}) status '{job.status}'")
     # check for running jobs by associated drive.
     drive = SystemDrives.query.filter_by(mount=dev_path).first()
-    if not drive.processing:
-        return  # drive is not processing, so we are safe to start another run.
+    if drive is None or not drive.processing:
+        return  # unknown or idle drive is safe to start another run.
     job = drive.job_current
     logging.critical(f'Drive {dev_path} has an active Job ({job.job_id}): {job.status}.')
     # log time
@@ -901,6 +1055,9 @@ def check_for_wait(job):
                 job.updated = True
                 job.hasnicetitle = True
                 database_updater({"hasnicetitle": True, "updated": True}, job)
+                break
+            if job.manual_start:
+                logging.info("Manual start found. Continuing rip.")
                 break
         database_updater({"status": JobState.IDLE.value}, job)
 

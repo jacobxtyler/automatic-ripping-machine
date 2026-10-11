@@ -6,25 +6,69 @@
 {% block content %}
     <div class="container">
         <div class="container d-flex justify-content-center">
-            <div class="row" style="flex-wrap: nowrap">
-                <form action="" method="get" novalidate>
+            <div class="row" style="flex-wrap: nowrap; min-width: min(100%, 720px);">
+                <form action="" method="get" novalidate class="w-100">
                     {{ form.hidden_tag() }}
-                    <div class="input-group mb-3">
-                        <div class="input-group-prepend">
-                            <span class="input-group-text" id="searchtitle">Title</span>
-                        </div>
-                        <input type="text" class="form-control" aria-label="searchtitle" name="title"
-                               value="{{ title }}" aria-describedby="searchtitle">
-                        <div class="invalid-tooltip">
-                            Search can't be blank
-                        </div>
-                        <div class="input-group-prepend">
-                            <span class="input-group-text" id="basic-addon1">Year</span>
-                        </div>
-                        <input type="text" class="form-control" name="year" value="{{ year }}" aria-label="year"
-                               aria-describedby="basic-addon1">
-                    </div>
                     <input class="form-control" name="job_id" value="{{ job_id }}" hidden>
+
+                    {% if media_type == "audiobook" %}
+                        <input class="form-control" name="media_type" value="audiobook" hidden>
+                        <div class="input-group mb-3">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text" id="searchtitle">Title</span>
+                            </div>
+                            <input type="text" class="form-control" aria-label="searchtitle" name="title"
+                                   value="{{ title }}" aria-describedby="searchtitle">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text" id="searchauthor">Author</span>
+                            </div>
+                            <input type="text" class="form-control" aria-label="searchauthor" name="author"
+                                   value="{{ author }}" aria-describedby="searchauthor">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group col-md-3">
+                                <label for="year">Year</label>
+                                <input class="form-control" id="year" name="year" value="{{ year }}">
+                            </div>
+                            <div class="form-group col-md-3">
+                                <label for="audiobook_disc_number">Disc Number</label>
+                                <input class="form-control" id="audiobook_disc_number" name="audiobook_disc_number"
+                                       type="number" min="1" value="{{ audiobook_disc_number }}">
+                            </div>
+                            <div class="form-group col-md-3">
+                                <label for="audiobook_total_discs">Total Discs</label>
+                                <input class="form-control" id="audiobook_total_discs" name="audiobook_total_discs"
+                                       type="number" min="1" value="{{ audiobook_total_discs }}">
+                            </div>
+                            <div class="form-group col-md-3">
+                                <label for="open_library_cover_id">Cover ID</label>
+                                <input class="form-control" id="open_library_cover_id" name="open_library_cover_id"
+                                       value="{{ open_library_cover_id }}">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="open_library_work_key">Open Library Work Key</label>
+                            <input class="form-control" id="open_library_work_key" name="open_library_work_key"
+                                   value="{{ open_library_work_key }}">
+                        </div>
+                    {% else %}
+                        <div class="input-group mb-3">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text" id="searchtitle">Title</span>
+                            </div>
+                            <input type="text" class="form-control" aria-label="searchtitle" name="title"
+                                   value="{{ title }}" aria-describedby="searchtitle">
+                            <div class="invalid-tooltip">
+                                Search can't be blank
+                            </div>
+                            <div class="input-group-prepend">
+                                <span class="input-group-text" id="basic-addon1">Year</span>
+                            </div>
+                            <input type="text" class="form-control" name="year" value="{{ year }}" aria-label="year"
+                                   aria-describedby="basic-addon1">
+                        </div>
+                    {% endif %}
+
                     <input class="form-control" name="save" value="save" hidden>
                     <button class="btn btn-info btn-lg btn-block" type="submit">Search</button>
                 </form>
@@ -33,22 +77,56 @@
         <br><br>
 
         <div class="row">
-            {% for res in results["Search"] %}
-                {% if "Type" in res and res["Type"].lower() != "game" %}
-                    <div class="col-md-3 text-center">
-                        <div class="card text-center">
+            {% if media_type == "audiobook" %}
+                {% for res in (results or {}).get("Search", []) %}
+                    <div class="col-md-3 text-center mb-3">
+                        <div class="card text-center h-100">
                             <div class="card-header">
-                                <a href="gettitle?imdbID={{ res["imdbID"] }}&job_id={{ job_id }}">
-                                  <img src="{{ res["Poster"] }}" width="120px" class="img-thumbnail" alt="Poster image">
-                                </a>
+                                {% if res["cover_id"] %}
+                                    <img src="https://covers.openlibrary.org/b/id/{{ res["cover_id"] }}-M.jpg"
+                                         width="120px" class="img-thumbnail" alt="Cover image">
+                                {% else %}
+                                    <img src="static/img/music.png" width="120px" class="img-thumbnail" alt="Cover image">
+                                {% endif %}
                             </div>
-                            <div class="card-body"><strong>{{ res["Title"] }}</strong> - {{ res["Type"].capitalize() }}
-                                ({{ res["Year"] }})
+                            <div class="card-body">
+                                <strong>{{ res["title"] }}</strong><br>
+                                {{ res["author"] or "Unknown Author" }}{% if res["year"] %} ({{ res["year"] }}){% endif %}
+                            </div>
+                            <div class="card-footer">
+                                <a href="{{ url_for('route_jobs.updatetitle',
+                                                    media_type='audiobook',
+                                                    title=res['title'],
+                                                    author=res['author'],
+                                                    year=res['year'],
+                                                    audiobook_disc_number=audiobook_disc_number,
+                                                    audiobook_total_discs=audiobook_total_discs,
+                                                    open_library_work_key=res['open_library_work_key'],
+                                                    open_library_cover_id=res['cover_id'],
+                                                    job_id=job_id) }}"
+                                   class="btn btn-primary btn-sm">Use Audiobook</a>
                             </div>
                         </div>
                     </div>
-                {% endif %}
-            {% endfor %}
+                {% endfor %}
+            {% else %}
+                {% for res in (results or {}).get("Search", []) %}
+                    {% if "Type" in res and res["Type"].lower() != "game" %}
+                        <div class="col-md-3 text-center">
+                            <div class="card text-center">
+                                <div class="card-header">
+                                    <a href="gettitle?imdbID={{ res["imdbID"] }}&job_id={{ job_id }}">
+                                      <img src="{{ res["Poster"] }}" width="120px" class="img-thumbnail" alt="Poster image">
+                                    </a>
+                                </div>
+                                <div class="card-body"><strong>{{ res["Title"] }}</strong> - {{ res["Type"].capitalize() }}
+                                    ({{ res["Year"] }})
+                                </div>
+                            </div>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
         </div>
     </div>
 

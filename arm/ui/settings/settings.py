@@ -18,15 +18,20 @@ import platform
 import importlib
 import re
 import subprocess
-from datetime import datetime
+import threading
+import time
+from copy import deepcopy
+from datetime import datetime, timezone
 import os
+from pathlib import Path
 
+import requests
 import sqlalchemy
 
 from flask_login import login_required, \
     current_user, login_user, UserMixin, logout_user  # noqa: F401
 from flask import render_template, request, flash, \
-    redirect, Blueprint, session, url_for
+    redirect, Blueprint, session, url_for, jsonify
 
 import arm.ui.utils as ui_utils
 from arm.ripper.ProcessHandler import arm_subprocess
@@ -36,15 +41,36 @@ from arm.models.system_drives import SystemDrives
 from arm.models.system_info import SystemInfo
 from arm.models.ui_settings import UISettings
 import arm.config.config as cfg
+from arm.ui.settings.ServerUtil import ServerUtil
 from arm.ui.settings import DriveUtils as drive_utils
 from arm.ui.forms import SettingsForm, UiSettingsForm, AbcdeForm, SystemInfoDrives
-from arm.ui.settings.ServerUtil import ServerUtil
 import arm.ripper.utils as ripper_utils
+
+
+def get_manual_start_wrapper():
+    """Return the wrapper script that matches the local ARM install style."""
+    install_path = Path(cfg.arm_config["INSTALLPATH"])
+
+    if Path("/.dockerenv").exists():
+        return install_path / "scripts/docker/docker_arm_wrapper.sh"
+
+    if (install_path / "venv/bin/python3").is_file():
+        return install_path / "scripts/thickclient/arm_venv_wrapper.sh"
+
+    return install_path / "scripts/thickclient/arm_wrapper.sh"
+
 
 route_settings = Blueprint('route_settings', __name__,
                            template_folder='templates',
                            static_folder='../static')
 REDIRECT_SETTINGS = "route_settings.settings"
+DIAGNOSTICS_CACHE_SECONDS = 300
+DIAGNOSTICS_TIMEOUT_SECONDS = 10
+_diagnostics_cache = None
+_diagnostics_cache_time = 0.0
+_diagnostics_refresh_lock = threading.Lock()
+_drive_operation_locks = {}
+_drive_operation_locks_lock = threading.Lock()
 
 
 def mask_last(value, n=4):
@@ -79,28 +105,21 @@ def settings():
     movies = Job.query.filter_by(video_type="movie").count()
     series = Job.query.filter_by(video_type="series").count()
     cds = Job.query.filter_by(disctype="music").count()
+    audiobooks = Job.query.filter_by(disctype="audiobook").count()
 
     # Get the current server time and timezone
     server_timezone = os.environ.get("TZ", "Etc/UTC")
     current_time = datetime.now()
     server_datetime = current_time.strftime(cfg.arm_config['DATE_FORMAT'])
-    [arm_version_local, arm_version_remote] = ui_utils.git_check_version()
-    local_git_hash = ui_utils.get_git_revision_hash()
-
     stats = {'server_datetime': server_datetime,
              'server_timezone': server_timezone,
              'python_version': platform.python_version(),
-             'arm_version_local': arm_version_local,
-             'arm_version_remote': arm_version_remote,
-             'git_commit': local_git_hash,
              'movies_ripped': movies,
              'series_ripped': series,
              'cds_ripped': cds,
+             'audiobooks_ripped': audiobooks,
              'no_failed_jobs': failed_rips,
-             'total_rips': total_rips,
-             'updated': ui_utils.git_check_updates(local_git_hash),
-             'hw_support': check_hw_transcode_support()
-             }
+             'total_rips': total_rips}
 
     # ARM UI config
     armui_cfg = ui_utils.arm_db_cfg()
@@ -112,9 +131,7 @@ def settings():
     media_path = cfg.arm_config['COMPLETED_PATH']
 
     # System Drives (CD/DVD/Blueray drives)
-    drive_utils.update_job_status()
     drives = drive_utils.get_drives()
-    drive_utils.update_tray_status(drives)
     form_drive = SystemInfoDrives(request.form)
 
     # Load up the comments.json, so we can comment the arm.yaml
@@ -144,35 +161,159 @@ def settings():
                            abcde_read_only=is_read_only(cfg.abcde_config_path))
 
 
-def check_hw_transcode_support():
+def _unknown_diagnostics(status="refreshing"):
+    return {
+        "status": status,
+        "checked_at": None,
+        "local_version": None,
+        "remote_version": None,
+        "git_commit": None,
+        "update_available": None,
+        "hw_support": {"intel": None, "nvidia": None, "amd": None},
+        "errors": [],
+    }
+
+
+def _log_diagnostic_error(category, error):
+    app.logger.warning("Diagnostics refresh failed for %s (%s)", category, type(error).__name__)
+
+
+def _read_local_version():
+    version_path = Path(cfg.arm_config["INSTALLPATH"]) / "VERSION"
+    version = version_path.read_text(encoding="utf-8").strip()
+    return version or None
+
+
+def _read_remote_version():
+    output = subprocess.check_output(
+        ["git", "show", "origin/HEAD:VERSION"],
+        cwd=cfg.arm_config["INSTALLPATH"],
+        encoding="utf-8",
+        timeout=DIAGNOSTICS_TIMEOUT_SECONDS,
+    )
+    return output.strip() or None
+
+
+def _read_git_commit():
+    output = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=cfg.arm_config["INSTALLPATH"],
+        encoding="utf-8",
+        timeout=DIAGNOSTICS_TIMEOUT_SECONDS,
+    )
+    commit = output.strip()
+    return commit[:7] if commit else None
+
+
+def _read_remote_commit():
+    url = "https://api.github.com/repos/automatic-ripping-machine/automatic-ripping-machine/commits/main"
+    response = requests.get(url, timeout=DIAGNOSTICS_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    return response.json().get("sha", "").strip() or None
+
+
+def _probe_hw_transcode_support():
     cmd = f"nice {cfg.arm_config['HANDBRAKE_CLI']}"
 
     app.logger.debug(f"Sending command: {cmd}")
     hw_support_status = {
-        "nvidia": False,
-        "intel": False,
-        "amd": False
+        "nvidia": False, "intel": False, "amd": False
     }
-    try:
-        hand_brake_output = arm_subprocess(f"{cmd}", shell=True, check=True)
+    hand_brake_output = arm_subprocess(
+        cmd, shell=True, check=True, timeout=DIAGNOSTICS_TIMEOUT_SECONDS
+    )
 
-        # NVENC
-        if re.search(r'nvenc: version ([0-9\\.]+) is available', str(hand_brake_output)):
-            app.logger.info("NVENC supported!")
-            hw_support_status["nvidia"] = True
-        # Intel QuickSync
-        if re.search(r'qsv:\sis(.*?)available\son', str(hand_brake_output)):
-            app.logger.info("Intel QuickSync supported!")
-            hw_support_status["intel"] = True
-        # AMD VCN
-        if re.search(r'vcn:\sis(.*?)available\son', str(hand_brake_output)):
-            app.logger.info("AMD VCN supported!")
-            hw_support_status["amd"] = True
-        app.logger.info("Handbrake call successful")
-        app.logger.debug(hand_brake_output)
-    except subprocess.CalledProcessError:
-        pass
+    if re.search(r'nvenc: version ([0-9\\.]+) is available', str(hand_brake_output)):
+        hw_support_status["nvidia"] = True
+    if re.search(r'qsv:\sis(.*?)available\son', str(hand_brake_output)):
+        hw_support_status["intel"] = True
+    if re.search(r'vcn:\sis(.*?)available\son', str(hand_brake_output)):
+        hw_support_status["amd"] = True
     return hw_support_status
+
+
+def check_hw_transcode_support():
+    """Return tri-state hardware support, preserving unknown results on probe failure."""
+    try:
+        return _probe_hw_transcode_support()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return {"nvidia": None, "intel": None, "amd": None}
+
+
+def _collect_diagnostics():
+    diagnostics = _unknown_diagnostics(status="ready")
+    errors = diagnostics["errors"]
+
+    for category, field, reader in (
+        ("local_version", "local_version", _read_local_version),
+        ("remote_version", "remote_version", _read_remote_version),
+        ("git_commit", "git_commit", _read_git_commit),
+    ):
+        try:
+            diagnostics[field] = reader()
+            if diagnostics[field] is None:
+                raise ValueError("empty result")
+        except (OSError, subprocess.SubprocessError, UnicodeError, ValueError) as error:
+            errors.append(category)
+            _log_diagnostic_error(category, error)
+
+    remote_commit = None
+    try:
+        remote_commit = _read_remote_commit()
+        if remote_commit is None:
+            raise ValueError("empty result")
+    except (requests.RequestException, AttributeError, ValueError, TypeError) as error:
+        errors.append("update")
+        _log_diagnostic_error("update", error)
+
+    if diagnostics["git_commit"] is not None and remote_commit is not None:
+        diagnostics["update_available"] = not remote_commit.startswith(diagnostics["git_commit"])
+
+    try:
+        diagnostics["hw_support"] = _probe_hw_transcode_support()
+    except (OSError, subprocess.SubprocessError):
+        errors.append("hw_support")
+        # arm_subprocess already logged this failure.
+
+    values = (
+        diagnostics["local_version"],
+        diagnostics["remote_version"],
+        diagnostics["git_commit"],
+        diagnostics["update_available"],
+        *diagnostics["hw_support"].values(),
+    )
+    if all(value is None for value in values):
+        diagnostics["status"] = "unavailable"
+    diagnostics["checked_at"] = datetime.now(timezone.utc).isoformat()
+    return diagnostics
+
+
+@route_settings.route('/settings/diagnostics')
+@login_required
+def settings_diagnostics():
+    """Return cached slow diagnostics without queueing behind an in-progress refresh."""
+    global _diagnostics_cache, _diagnostics_cache_time
+
+    now = time.monotonic()
+    if _diagnostics_cache is not None and now - _diagnostics_cache_time < DIAGNOSTICS_CACHE_SECONDS:
+        return jsonify(deepcopy(_diagnostics_cache))
+
+    if not _diagnostics_refresh_lock.acquire(blocking=False):
+        response = deepcopy(_diagnostics_cache) if _diagnostics_cache is not None else _unknown_diagnostics()
+        response["status"] = "refreshing"
+        return jsonify(response)
+
+    try:
+        _diagnostics_cache = _collect_diagnostics()
+        _diagnostics_cache_time = time.monotonic()
+        return jsonify(deepcopy(_diagnostics_cache))
+    finally:
+        _diagnostics_refresh_lock.release()
+
+
+def _drive_operation_lock(drive_id):
+    with _drive_operation_locks_lock:
+        return _drive_operation_locks.setdefault(str(drive_id), threading.Lock())
 
 
 @route_settings.route('/save_settings', methods=['POST'])
@@ -337,6 +478,7 @@ def system_drive_scan():
     Overview - Scan for the system drives and update the database.
     """
     # Update to scan for changes to the ripper system
+    drive_utils.update_job_status()
     new_count = drive_utils.drives_update()
     flash(f"ARM found {new_count} new drives", "success")
     return redirect(url_for(REDIRECT_SETTINGS))
@@ -354,15 +496,21 @@ def drive_eject(eject_id):
         app.logger.error(f"Drive eject encountered an error: {e}")
         flash(f"Cannot find drive {eject_id} in database.", "error")
         return redirect(url_for(REDIRECT_SETTINGS))
-    # block for running jobs
+    # Never touch drive hardware while a job is active.
     if drive.job_id_current:
-        drive.tray_status()  # update tray status
-        if not drive.open:  # allow closing
-            flash(f"Job [{drive.job_id_current}] in progress. Cannot eject {eject_id}.", "error")
-            return redirect(url_for(REDIRECT_SETTINGS))
-    # toggle open/close (with non-critical error)
-    if (error := drive.eject(method="toggle")) is not None:
-        flash(error, "error")
+        flash(f"Job [{drive.job_id_current}] in progress. Cannot operate drive {eject_id}.", "error")
+        return redirect(url_for(REDIRECT_SETTINGS))
+
+    operation_lock = _drive_operation_lock(eject_id)
+    if not operation_lock.acquire(blocking=False):
+        flash(f"Drive operation already in progress for {eject_id}.", "error")
+        return redirect(url_for(REDIRECT_SETTINGS))
+
+    try:
+        if (error := drive.eject(method="toggle")) is not None:
+            flash(error, "error")
+    finally:
+        operation_lock.release()
     return redirect(url_for(REDIRECT_SETTINGS))
 
 
@@ -395,31 +543,30 @@ def drive_manual(manual_id):
     drive = SystemDrives.query.filter_by(drive_id=manual_id).first()
     dev_path = drive.mount.lstrip('/dev/')
 
-    cmd = os.path.join(
-        cfg.arm_config["INSTALLPATH"],
-        f"scripts/docker/docker_arm_wrapper.sh {dev_path}",
-    )
+    wrapper = get_manual_start_wrapper()
+    cmd = f"{wrapper} {dev_path}"
     app.logger.debug(f"Running command[{cmd}]")
 
-    # Manually start ARM if the udev rules are not working for some reason
+    # Manually start ARM if the udev rules are not working for some reason.
+    # Do not wait for the ripper to finish; it is a long-running background job.
     try:
-        manual_process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = manual_process.communicate()
-
-        if manual_process.returncode != 0:
-            raise subprocess.CalledProcessError(manual_process.returncode, cmd, output=stdout, stderr=stderr)
+        manual_process = subprocess.Popen(
+            cmd,
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 
         message = f"Manually starting a job on Drive: '{drive.name}'"
         status = "success"
-        app.logger.debug(stdout)
+        app.logger.debug(f"Manual start process pid: {manual_process.pid}")
 
-    except subprocess.CalledProcessError as e:
+    except OSError as e:
         message = f"Failed to start a job on Drive: '{drive.name}' See logs for info"
         status = "danger"
         app.logger.error(message)
         app.logger.error(f"error: {e}")
-        app.logger.error(f"stdout: {e.output}")
-        app.logger.error(f"stderr: {e.stderr}")
 
     flash(message, status)
     return redirect('/settings')

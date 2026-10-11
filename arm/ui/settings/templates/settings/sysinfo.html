@@ -126,48 +126,18 @@
                     <ul class="list-group list-group-flush">
                         <!-- INTEL -->
                         <li class="list-group-item text-center">
-                            Intel QuickSync: {% if stats['hw_support']['intel'] %}
-                            <img src="{{ url_for('static', filename='img/success.png') }}"
-                                 alt="update image" width="20px" height="20px">
-                        {% else %}
-                            <img src="{{ url_for('static', filename='img/fail.png') }}"
-                                 alt="update image" width="20px" height="20px">
-                            <a href="https://github.com/automatic-ripping-machine/automatic-ripping-machine/wiki/"
-                               target=”_blank”>
-                                <img title="Get Help from the wiki!"
-                                     src="{{ url_for('static', filename='img/info.png') }}" width="20px"
-                                     height="20px" alt="Get Help from the wiki!"></a>
-                        {% endif %}
+                            Intel QuickSync:
+                            <span data-diagnostic-hw="intel">Checking...</span>
                         </li>
                         <!-- NVIDIA -->
                         <li class="list-group-item text-center">
-                            Nvidia NVENC:{% if stats['hw_support']['nvidia'] %}
-                            <img src="{{ url_for('static', filename='img/success.png') }}"
-                                 alt="update image" width="20px" height="20px">
-                        {% else %}
-                            <img src="{{ url_for('static', filename='img/fail.png') }}"
-                                 alt="update image" width="20px" height="20px">
-                            <a href="https://github.com/automatic-ripping-machine/automatic-ripping-machine/wiki/"
-                               target=”_blank”>
-                                <img title="Get Help from the wiki!"
-                                     src="{{ url_for('static', filename='img/info.png') }}" width="20px"
-                                     height="20px" alt="Get Help from the wiki!"></a>
-                        {% endif %}
+                            Nvidia NVENC:
+                            <span data-diagnostic-hw="nvidia">Checking...</span>
                         </li>
                         <!-- AMD -->
                         <li class="list-group-item text-center">
-                            AMD VCN:{% if stats['hw_support']['amd'] %}
-                            <img src="{{ url_for('static', filename='img/success.png') }}"
-                                 alt="update image" width="20px" height="20px">
-                        {% else %}
-                            <img src="{{ url_for('static', filename='img/fail.png') }}"
-                                 alt="update image" width="20px" height="20px">
-                            <a href="https://github.com/automatic-ripping-machine/automatic-ripping-machine/wiki/"
-                               target=”_blank”>
-                                <img title="Get Help from the wiki!"
-                                     src="{{ url_for('static', filename='img/info.png') }}" width="20px"
-                                     height="20px" alt="Get Help from the wiki!"></a>
-                        {% endif %}
+                            AMD VCN:
+                            <span data-diagnostic-hw="amd">Checking...</span>
                         </li>
                     </ul>
                 </div>
@@ -175,4 +145,5 @@
             <div class="col pt-3"></div>
         </div>
     </div>
+    <script src="{{ url_for('static', filename='js/diagnostics.js') }}"></script>
 {% endblock %}

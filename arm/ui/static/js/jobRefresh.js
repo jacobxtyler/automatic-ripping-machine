@@ -67,7 +67,9 @@ function updateProgress(job, oldJob) {
                              </small></div></div>`;
     const mainProgressBar = `<div id="jobId${job.job_id}_stage"><b>Stage: </b>${job.stage}</div>
                              <div id="jobId${job.job_id}_progress" ><div class="progress">${subProgressBar}</div>
-                             <div id="jobId${job.job_id}_eta"><b>ETA: </b>${job.eta}</div>`;
+                             <div id="jobId${job.job_id}_eta"><b>ETA: </b>${job.eta}</div>
+                             <div id="jobId${job.job_id}_cur_fps"><b>CUR FPS: </b>${job.cur_fps}</div>
+                             <div id="jobId${job.job_id}_avg_fps"><b>AVG FPS: </b>${job.avg_fps}</div>`;
     const progressSection = $(`#jobId${job.job_id}_progress_section`);
     const stage = $(`#jobId${job.job_id}_stage`);
     const eta = $(`#jobId${job.job_id}_eta`);
@@ -90,13 +92,30 @@ function updateProgress(job, oldJob) {
             }
             updateContents(stage, job, "Stage", job.stage);
             updateContents(eta, job, "ETA", job.eta);
+
+            const curFpsDiv = $(`#jobId${job.job_id}_cur_fps`);
+            const avgFpsDiv = $(`#jobId${job.job_id}_avg_fps`);
+
+            if (job.cur_fps === undefined || job.cur_fps === '-1') {
+                curFpsDiv.hide();
+            } else {
+                curFpsDiv.show();
+                updateContents(curFpsDiv, job, "CUR FPS", job.cur_fps);
+            }
+
+            if (job.avg_fps === undefined || job.avg_fps === '-1') {
+                avgFpsDiv.hide();
+            } else {
+                avgFpsDiv.show();
+                updateContents(avgFpsDiv, job, "AVG FPS", job.avg_fps);
+            }
         }
     }
 }
 
 /**
  * Checks if current job needs a stage/progress bar added
- * This is enabled for music discs to enable current ripping track in job.stage
+ * This is enabled for audio discs to enable current ripping track in job.stage
  * @param job current job object
  * @returns {boolean} True if job is transcoding or disc is an audio disc
  */
@@ -111,7 +130,7 @@ function checkTranscodeStatus(job) {
         status = true;
     }
     // abcde is ripping the audio disc and is outputting stage and eta
-    if (job.disctype === "music" && job.stage !== "") {
+    if ((job.disctype === "music" || job.disctype === "audiobook") && job.stage !== "") {
         status = true;
     }
     return status;
@@ -148,6 +167,7 @@ function updateJobItem(oldJob, job) {
     const cardHeader = $(`#jobId${job.job_id}_header`);
     const posterUrl = $(`#jobId${job.job_id}_poster_url`);
     const status = $(`#jobId${job.job_id}_status`);
+    const confirmTitle = $(`#jobId${job.job_id}_confirm_title`);
     // Update card header ( Title (Year) )
     if (cardHeader[0].innerText !== `${job.title} (${job.year})`) {
         cardHeader[0].innerText = `${job.title} (${job.year})`;
@@ -171,6 +191,9 @@ function updateJobItem(oldJob, job) {
     updateContents($(`#jobId${job.job_id}_MAINFEATURE`), job, "Main Feature", job.config.MAINFEATURE);
     updateContents($(`#jobId${job.job_id}_MINLENGTH`), job, "Min Length", job.config.MINLENGTH);
     updateContents($(`#jobId${job.job_id}_MAXLENGTH`), job, "Max Length", job.config.MAXLENGTH);
+    if (confirmTitle.length) {
+        confirmTitle.html(confirmTitleButton(job, job.job_id.split("_")));
+    }
 }
 
 /**

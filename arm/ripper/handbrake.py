@@ -271,40 +271,131 @@ def get_track_info(srcpath, job):
     hand_break_output = handbrake_char_encoding(cmd)
 
     if hand_break_output is not None:
-        t_pattern = re.compile(r'.*\+ title *')
-        pattern = re.compile(r'.*duration:.*')
-        seconds = 0
-        t_no = 0
-        fps = float(0)
-        aspect = 0
-        result = None
-        main_feature = False
-        for line in hand_break_output:
-
-            # get number of titles
-            if result is None:
-                # scan: DVD has 12 title(s)
-                result = re.search(r'scan: (BD|DVD) has (\d{1,3}) title\(s\)', line)
-
-                if result:
-                    titles = result.group(2).strip()
-                    logging.debug(f"Line found is: {line}")
-                    logging.info(f"Found {titles} titles")
-                    job.no_of_titles = titles
-                    db.session.commit()
-
-            main_feature, t_no = title_finder(aspect, fps, job, line, main_feature, seconds, t_no, t_pattern)
-            seconds = seconds_builder(line, pattern, seconds)
-            main_feature = is_main_feature(line, main_feature)
-
-            if (re.search(" fps", line)) is not None:
-                fps = line.rsplit(' ', 2)[-2]
-                aspect = line.rsplit(' ', 3)[-3]
-                aspect = str(aspect).replace(",", "")
+        HandBrakeTrackInfoProcessor(job).process(hand_break_output)
     else:
         logging.info("HandBrake unable to get track information")
 
-    utils.put_track(job, t_no, seconds, aspect, fps, main_feature, "HandBrake")
+
+class HandBrakeTrackInfoProcessor:
+    """Capture the useful title metadata exposed by HandBrake's text scan."""
+
+    TITLE_PATTERN = re.compile(r'^\s*\+ title\s+(\d+):')
+    TITLE_COUNT_PATTERN = re.compile(r'scan: (?:BD|DVD) has (\d{1,3}) title\(s\)')
+    DURATION_PATTERN = re.compile(r'\+ duration:\s*(\d+):(\d+):(\d+)')
+    VIDEO_PATTERN = re.compile(
+        r'\+ size:\s*(\d+x\d+).*display aspect:\s*([^,\s]+).*?([\d.]+)\s+fps',
+        re.IGNORECASE
+    )
+
+    def __init__(self, job):
+        self.job = job
+        self.track_number = None
+        self._reset()
+
+    def _reset(self):
+        self.seconds = 0
+        self.aspect = ""
+        self.fps = 0.0
+        self.main_feature = False
+        self.chapters = 0
+        self.playlist_id = None
+        self.segment_count = None
+        self.segment_map = None
+        self.video_resolution = None
+        self.video_codec = None
+        self.audio_streams = []
+        self.subtitle_streams = []
+        self.section = None
+
+    def process(self, lines):
+        for line in lines:
+            self.process_line(line)
+        self._add_track()
+
+    def process_line(self, line):
+        title_count = self.TITLE_COUNT_PATTERN.search(line)
+        if title_count:
+            self.job.no_of_titles = title_count.group(1)
+            db.session.commit()
+
+        title = self.TITLE_PATTERN.search(line)
+        if title:
+            self._add_track()
+            self._reset()
+            self.track_number = title.group(1)
+            return
+        if self.track_number is None:
+            return
+
+        self._process_metadata(line)
+
+    def _process_metadata(self, line):
+        """Apply one line of metadata to the current title."""
+        duration = self.DURATION_PATTERN.search(line)
+        if duration:
+            hours, minutes, seconds = (int(value) for value in duration.groups())
+            self.seconds = hours * 3600 + minutes * 60 + seconds
+        video = self.VIDEO_PATTERN.search(line)
+        if video:
+            self.video_resolution, self.aspect, fps = video.groups()
+            self.fps = float(fps)
+
+        stripped = line.strip()
+        lower = stripped.lower()
+        if "main feature" in lower:
+            self.main_feature = True
+        elif lower.startswith("+ playlist:"):
+            self.playlist_id = stripped.split(":", 1)[1].strip() or None
+        elif lower.startswith("+ segment map:") or lower.startswith("+ segments:"):
+            self.segment_map = stripped.split(":", 1)[1].strip() or None
+            if self.segment_map:
+                self.segment_count = len([item for item in self.segment_map.split(",") if item.strip()])
+        elif lower.startswith("+ video codec:"):
+            self.video_codec = stripped.split(":", 1)[1].strip() or None
+        elif lower.startswith("+ chapters:"):
+            self.section = "chapters"
+        elif lower.startswith("+ audio tracks:"):
+            self.section = "audio"
+        elif lower.startswith("+ subtitle tracks:"):
+            self.section = "subtitle"
+        elif re.match(r'^\+\s+\d+[:,]', stripped):
+            if self.section == "chapters":
+                self.chapters += 1
+            elif self.section == "audio":
+                self._append_stream(self.audio_streams, stripped)
+            elif self.section == "subtitle":
+                self._append_stream(self.subtitle_streams, stripped)
+
+    @staticmethod
+    def _append_stream(stream_list, line):
+        description = re.split(r'[:,]', line, maxsplit=1)[1].strip()
+        language_match = re.match(r'([^,(]+)', description)
+        language = language_match.group(1).strip() if language_match else description
+        codec_match = re.search(r'\(([^)]+)\)', description)
+        summary = f"{language} ({codec_match.group(1)})" if codec_match else language
+        if summary and summary not in stream_list:
+            stream_list.append(summary)
+
+    def _add_track(self):
+        if self.track_number is None:
+            return
+        utils.put_track(
+            self.job,
+            self.track_number,
+            self.seconds,
+            self.aspect,
+            self.fps,
+            self.main_feature,
+            "HandBrake",
+            chapters=self.chapters,
+            playlist_id=self.playlist_id,
+            segment_count=self.segment_count,
+            segment_map=self.segment_map,
+            video_resolution=self.video_resolution,
+            video_codec=self.video_codec,
+            audio_languages=", ".join(self.audio_streams) or None,
+            subtitle_languages=", ".join(self.subtitle_streams) or None,
+        )
 
 
 def title_finder(aspect, fps, job, line, main_feature, seconds, t_no, t_pattern):

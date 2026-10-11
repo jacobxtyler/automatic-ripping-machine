@@ -4,7 +4,7 @@ from unittest.mock import patch
 import subprocess
 
 sys.path.insert(0, '/opt/arm')
-from arm.ripper.ProcessHandler import arm_subprocess    # noqa: E402
+from arm.ripper.ProcessHandler import arm_subprocess, subprocess as process_subprocess    # noqa: E402
 
 
 class TestProcessHandler(unittest.TestCase):
@@ -23,7 +23,12 @@ class TestProcessHandler(unittest.TestCase):
         result = arm_subprocess(cmd, in_shell)
 
         self.assertEqual(result, mock_output)
-        mock_check_output.assert_called_once_with(cmd, shell=in_shell)
+        mock_check_output.assert_called_once_with(
+            cmd,
+            shell=in_shell,
+            stderr=process_subprocess.STDOUT,
+            encoding="utf-8"
+        )
 
     @patch("subprocess.check_output")
     def test_arm_subprocess_error(self, mock_check_output):
@@ -34,7 +39,7 @@ class TestProcessHandler(unittest.TestCase):
         mock_check_output.side_effect = subprocess.CalledProcessError(
             returncode=1,
             cmd=["invalid_command"],
-            output=b"Mock error"
+            output="Mock error"
         )
 
         cmd = ["invalid_command"]
@@ -43,7 +48,35 @@ class TestProcessHandler(unittest.TestCase):
         result = arm_subprocess(cmd, in_shell)
 
         self.assertEqual(result, None)
-        mock_check_output.assert_called_once_with(cmd, shell=in_shell)
+        mock_check_output.assert_called_once_with(
+            cmd,
+            shell=in_shell,
+            stderr=process_subprocess.STDOUT,
+            encoding="utf-8"
+        )
+
+    @patch("subprocess.check_output")
+    def test_arm_subprocess_forwards_timeout(self, mock_check_output):
+        mock_check_output.return_value = "done"
+
+        result = arm_subprocess(["slow-command"], timeout=10)
+
+        self.assertEqual(result, "done")
+        mock_check_output.assert_called_once_with(
+            ["slow-command"],
+            shell=False,
+            stderr=process_subprocess.STDOUT,
+            encoding="utf-8",
+            timeout=10,
+        )
+
+    @patch("subprocess.check_output")
+    def test_arm_subprocess_timeout(self, mock_check_output):
+        mock_check_output.side_effect = subprocess.TimeoutExpired(["slow-command"], 10)
+
+        self.assertIsNone(arm_subprocess(["slow-command"], timeout=10))
+        with self.assertRaises(subprocess.TimeoutExpired):
+            arm_subprocess(["slow-command"], check=True, timeout=10)
 
 
 if __name__ == '__main__':

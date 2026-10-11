@@ -78,7 +78,7 @@ def log_arm_params(job):
                 "MKV_ARGS", "DELRAWFILES", "HB_PRESET_DVD", "HB_PRESET_BD",
                 "HB_ARGS_DVD", "HB_ARGS_BD", "FFMPEG_CLI", "FFMPEG_LOCAL", "USE_FFMPEG",
                 "FFMPEG_ARGS", "RAW_PATH", "TRANSCODE_PATH",
-                "COMPLETED_PATH", "EXTRAS_SUB", "EMBY_REFRESH", "EMBY_SERVER",
+                "COMPLETED_PATH", "AUDIOBOOK_PATH", "EXTRAS_SUB", "EMBY_REFRESH", "EMBY_SERVER",
                 "EMBY_PORT", "NOTIFY_RIP", "NOTIFY_TRANSCODE",
                 "MAX_CONCURRENT_TRANSCODES", "MAX_CONCURRENT_MAKEMKVINFO"):
         logging.info(f"{key.lower()}: {str(cfg.arm_config.get(key, '<not given>'))}")
@@ -93,13 +93,17 @@ def check_fstab():
     # todo: remove this from the ripper and add into the ARM UI with a warning
     """
     logging.info("Checking for fstab entry.")
-    with open('/etc/fstab', 'r') as fstab:
-        lines = fstab.readlines()
-        for line in lines:
-            # Now grabs the real uncommented fstab entry
-            if re.search("^" + job.devpath, line):
-                logging.info(f"fstab entry is: {line.rstrip()}")
-                return
+    try:
+        with open('/etc/fstab', 'r') as fstab:
+            lines = fstab.readlines()
+    except OSError as error:
+        logging.warning(f"Could not read /etc/fstab ({error}). Skipping fstab check.")
+        return
+    for line in lines:
+        # Now grabs the real uncommented fstab entry
+        if re.search("^" + re.escape(job.devpath), line):
+            logging.info(f"fstab entry is: {line.rstrip()}")
+            return
     logging.error("No fstab entry found.  ARM will likely fail.")
 
 
@@ -136,6 +140,21 @@ def main():
             db.session.commit()
         else:
             logging.critical("Music rip failed.  See previous errors.  Exiting. ")
+            job.status = JobState.FAILURE.value
+            db.session.commit()
+
+    # Type: Audiobook
+    elif job.disctype == "audiobook":
+        if utils.rip_audiobook(job, log_file):
+            output_path = getattr(job, "path", None)
+            output_message = f". Output: {output_path}" if output_path else ""
+            utils.notify(job, constants.NOTIFY_TITLE,
+                         f"Audiobook CD: {job.title} {constants.PROCESS_COMPLETE}{output_message}")
+            utils.scan_emby()
+            job.status = JobState.SUCCESS.value
+            db.session.commit()
+        else:
+            logging.critical("Audiobook rip failed.  See previous errors.  Exiting. ")
             job.status = JobState.FAILURE.value
             db.session.commit()
 
@@ -189,6 +208,7 @@ def setup():
     # ARM Job starts
     # Create new job
     job = Job(devpath)
+    job.manual_mode = drive.drive_mode == 'manual'
     # Setup logging
     log_file = logger.setup_job_log(job)
 
@@ -254,24 +274,28 @@ if __name__ == "__main__":
                 f"ARM encountered a fatal error processing {job.title}. "
                 f"Check the logs for more details. {error}"
             )
+            job.status = JobState.FAILURE.value
+            job.errors = str(error)
         else:
             utils.notify(
-                job,
+                None,
                 constants.NOTIFY_TITLE,
-                f"ARM encountered a fatal error during job setup."
+                f"ARM encountered a fatal error during job setup. "
                 f"Check the logs for more details. {error}"
             )
-        job.status = JobState.FAILURE.value
-        job.errors = str(error)
         # Possibly add cleanup section here for failed job files
     else:
-        job.status = JobState.SUCCESS.value
+        if job:
+            job.status = JobState.SUCCESS.value
     finally:
         if job:
             job.eject()  # each job stores its eject status, so it is safe to call.
             job.stop_time = datetime.datetime.now()
-            job_length = job.stop_time - job.start_time if job.start_time else 0
-            minutes, seconds = divmod(job_length.seconds + job_length.days * 86400, 60)
-            hours, minutes = divmod(minutes, 60)
-            job.job_length = f'{hours:d}:{minutes:02d}:{seconds:02d}'
-        db.session.commit()
+            if job.start_time:
+                job_length = job.stop_time - job.start_time
+                minutes, seconds = divmod(job_length.seconds + job_length.days * 86400, 60)
+                hours, minutes = divmod(minutes, 60)
+                job.job_length = f'{hours:d}:{minutes:02d}:{seconds:02d}'
+            else:
+                job.job_length = "0:00:00"
+            db.session.commit()
